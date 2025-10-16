@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>AutoSpares Pro — Sales & Inventory</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="manifest.json" rel="manifest"/>
+<meta content="#0ea5e9" name="theme-color"/>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW reg failed', err));
+    });
+  }
+</script>
+<style>
+  :root { --brand:#0ea5e9; }
+  .brand { color: var(--brand); }
+  .brand-bg { background: var(--brand); }
+  @media print { .no-print{display:none!important} .print-area{padding:0!important;box-shadow:none!important} body{background:white} }
+  .suggest-item{padding:.5rem .75rem;cursor:pointer}
+  .suggest-item:hover{background:#f1f5f9}
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+<div id="backendBanner" class="hidden text-sm text-amber-900 bg-amber-100 border border-amber-200 px-4 py-2">
+  Backend not configured — edit <b>config.js</b> and set <code>DATA_API</code> and <code>API_KEY</code>.
+</div>
+<header class="no-print sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl brand-bg grid place-items-center text-white font-bold">AS</div>
+      <div>
+        <h1 class="text-lg font-semibold">AutoSpares <span class="brand">Pro</span></h1>
+        <p class="text-xs text-slate-500">Sales & Inventory Management</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2" id="topUserBar">
+      <span class="pill" id="activeRole">Role: Guest</span>
+      <button class="btn" id="btnBackup">Backup</button>
+      <button class="btn" id="btnRestore">Restore</button>
+      <label class="btn cursor-pointer">Import <input accept="application/json" class="hidden" id="importFile" type="file"/></label>
+      <button class="btn" id="btnLogout">Logout</button>
+    </div>
+  </div>
+</header>
+<main class="max-w-7xl mx-auto p-4 grid md:grid-cols-12 gap-4">
+  <aside class="no-print md:col-span-3 lg:col-span-2">
+    <nav class="bg-white rounded-2xl shadow-md p-4 space-y-2" id="nav">
+      <button class="w-full border rounded-xl px-4 py-2" data-page="dashboard">📊 Dashboard</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="pos">🧾 Point of Sale</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="inventory">📦 Inventory</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="purchases">📥 Purchases/GRN</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="sales">📚 Sales Records</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="suppliers">🏭 Suppliers</button>
+      <button class="w-full border rounded-xl px-4 py-2" data-page="settings">⚙️ Settings</button>
+    </nav>
+    <div class="bg-white rounded-2xl shadow-md p-4 mt-4 space-y-3" id="quickKpis">
+      <div class="flex items-center justify-between"><span class="text-slate-500">Items</span><b id="kpiItems">0</b></div>
+      <div class="flex items-center justify-between"><span class="text-slate-500">On‑hand Stock</span><b id="kpiStock">0</b></div>
+      <div class="flex items-center justify-between"><span class="text-slate-500">Today Sales (K)</span><b id="kpiToday">0.00</b></div>
+      <div class="flex items-center justify-between"><span class="text-slate-500">Low Stock</span><b id="kpiLow">0</b></div>
+    </div>
+  </aside>
+  <section class="md:col-span-9 lg:col-span-10 space-y-4" id="pages">
+    <div class="bg-white rounded-2xl shadow-md p-4 max-w-lg mx-auto" id="page-login">
+      <h2 class="text-xl font-semibold mb-2">Login</h2>
+      <p class="text-sm text-slate-500 mb-4">Demo users: <b>admin/admin123</b>, <b>manager/manager123</b>, <b>cashier/cashier123</b></p>
+      <div class="grid md:grid-cols-2 gap-3">
+        <div><label class="text-sm">Username</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginUser" placeholder="e.g. admin"/></div>
+        <div><label class="text-sm">Password</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginPass" placeholder="••••••" type="password"/></div>
+      </div>
+      <div class="flex items-center gap-2 mt-4">
+        <button class="px-4 py-2 rounded-xl text-white" id="btnLogin" style="background:#0ea5e9">Login</button>
+        <button class="border rounded-xl px-4 py-2" id="btnFillDemo">Fill demo</button>
+      </div>
+    </div>
+    <div class="hidden" id="page-dashboard">
+      <div class="grid lg:grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Today Summary</h3>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Invoices</div><div class="text-xl font-bold" id="dashInvoices">0</div></div>
+            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Sales (K)</div><div class="text-xl font-bold" id="dashSales">0.00</div></div>
+            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Avg. Basket (K)</div><div class="text-xl font-bold" id="dashAvg">0.00</div></div>
+            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Items Sold</div><div class="text-xl font-bold" id="dashUnits">0</div></div>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Top Selling</h3><ul class="space-y-2 text-sm" id="topSelling"></ul></div>
+        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Low Stock</h3><ul class="space-y-2 text-sm" id="lowStock"></ul></div>
+      </div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-pos">
+      <div class="flex flex-col md:flex-row md:items-end gap-3">
+        <div class="flex-1 relative">
+          <label class="text-sm">Search Item</label>
+          <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSearch" placeholder="Type part name, SKU or vehicle"/>
+          <div class="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto hidden" id="posSuggest"></div>
+        </div>
+        <div><label class="text-sm">Add by SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSku" placeholder="e.g. BRK-001"/></div>
+        <button class="px-4 py-2 rounded-xl text-white" id="posAdd" style="background:#0ea5e9">Add</button>
+      </div>
+      <div class="mt-4 overflow-x-auto">
+        <table class="w-full text-sm" id="posTable">
+          <thead><tr><th>SKU</th><th>Item</th><th>Price (K)</th><th>Qty</th><th>Line Total</th><th class="no-print">Remove</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="grid md:grid-cols-4 gap-3 mt-4">
+        <div class="bg-white rounded-2xl shadow p-4 border">
+          <label class="text-sm">Discount (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posDiscount" min="0" type="number" value="0"/>
+          <label class="text-sm mt-2">VAT %</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posVat" min="0" type="number" value="16"/>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-4 border md:col-span-2">
+          <div class="flex items-center justify-between text-sm"><span>Subtotal</span><b id="posSubtotal">0.00</b></div>
+          <div class="flex items-center justify-between text-sm"><span>Discount</span><b id="posDiscountAmt">0.00</b></div>
+          <div class="flex items-center justify-between text-sm"><span>VAT</span><b id="posVatAmt">0.00</b></div>
+          <div class="flex items-center justify-between text-lg mt-2"><span>Total</span><b id="posTotal">0.00</b></div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <button class="px-4 py-2 rounded-xl text-white" id="posPay" style="background:#0ea5e9">Process Payment</button>
+          <button class="border rounded-xl px-4 py-2" disabled="true" id="posPrint">Print Invoice</button>
+          <button class="border rounded-xl px-4 py-2" id="posClear">Clear</button>
+        </div>
+      </div>
+      <div class="mt-4 bg-white rounded-2xl shadow-md p-4 print-area hidden" id="receipt">
+        <div class="text-center">
+          <h2 class="font-semibold" id="rcptName"></h2>
+          <div class="text-xs text-slate-500" id="rcptAddress">Plot 123, Main Road, Lusaka</div>
+        </div>
+        <div class="text-xs mt-2 flex items-center justify-between">
+          <div>Invoice: <span id="rcptInv"></span></div>
+          <div>Date: <span id="rcptDate"></span></div>
+        </div>
+        <table class="w-full text-sm mt-2">
+          <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+          <tbody id="rcptBody"></tbody>
+        </table>
+        <div class="text-sm mt-2 flex flex-col items-end gap-1">
+          <div>Subtotal: <b id="rcptSub"></b></div>
+          <div>Discount: <b id="rcptDis"></b></div>
+          <div>VAT: <b id="rcptVat"></b></div>
+          <div class="text-lg">Total: <b id="rcptTot"></b></div>
+        </div>
+      </div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-inventory">
+      <div class="flex flex-col md:flex-row md:items-end gap-3">
+        <div class="flex-1"><label class="text-sm">Search</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="invSearch" placeholder="Part, SKU, Make/Model"/></div>
+        <div class="grid grid-cols-2 gap-2">
+          <button class="px-4 py-2 rounded-xl text-white" id="invAdd" style="background:#0ea5e9">+ New Item</button>
+          <button class="border rounded-xl px-4 py-2" id="invExport">Export</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto mt-3">
+        <table class="w-full text-sm" id="invTable">
+          <thead><tr><th>SKU</th><th>Item</th><th>Make/Model</th><th>Buy (K)</th><th>Sell (K)</th><th>Stock</th><th>Reorder</th><th>Bin</th><th class="no-print">Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-purchases">
+      <div class="grid md:grid-cols-4 gap-3">
+        <div class="md:col-span-2"><label class="text-sm">Supplier</label><select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSupplier"></select></div>
+        <div><label class="text-sm">SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSku" placeholder="Existing item SKU"/></div>
+        <div><label class="text-sm">Qty</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnQty" min="1" type="number" value="1"/></div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button class="px-4 py-2 rounded-xl text-white" id="grnAdd" style="background:#0ea5e9">Receive Stock</button>
+        <button class="border rounded-xl px-4 py-2" id="grnClear">Clear</button>
+      </div>
+      <div class="mt-4"><h3 class="font-semibold mb-2">Recent GRNs</h3><ul class="text-sm space-y-1" id="grnList"></ul></div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-sales">
+      <div class="grid md:grid-cols-4 gap-3 mb-3">
+        <div><label class="text-sm">From</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesFrom" type="date"/></div>
+        <div><label class="text-sm">To</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesTo" type="date"/></div>
+        <div class="md:col-span-2 flex items-end gap-2"><button class="px-4 py-2 rounded-xl text-white" id="salesFilter" style="background:#0ea5e9">Filter</button><button class="border rounded-xl px-4 py-2" id="salesPrint">Print Daily Summary</button></div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="salesTable">
+          <thead><tr><th>Date</th><th>Invoice</th><th>Items</th><th>Total (K)</th><th>Cashier</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-suppliers">
+      <div class="grid md:grid-cols-3 gap-3">
+        <div><label class="text-sm">Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supName"/></div>
+        <div><label class="text-sm">Phone</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supPhone"/></div>
+        <div><label class="text-sm">Email</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supEmail"/></div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button class="px-4 py-2 rounded-xl text-white" id="supAdd" style="background:#0ea5e9">Add Supplier</button>
+        <button class="border rounded-xl px-4 py-2" id="supClear">Clear</button>
+      </div>
+      <div class="mt-3">
+        <table class="w-full text-sm" id="supTable">
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th class="no-print">Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-settings">
+      <h3 class="font-semibold mb-2">Business Settings</h3>
+      <div class="grid md:grid-cols-3 gap-3">
+        <div><label class="text-sm">Business Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setName" placeholder="AutoSpares Pro"/></div>
+        <div><label class="text-sm">Address</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setAddress" placeholder="Plot 123, Main Road, Lusaka"/></div>
+        <div><label class="text-sm">Currency Symbol</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setCur" value="K"/></div>
+      </div>
+      <h3 class="font-semibold mt-4 mb-2">Users</h3>
+      <div class="grid md:grid-cols-4 gap-3">
+        <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uName" placeholder="username"/>
+        <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uPass" placeholder="password"/>
+        <select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uRole"><option>Admin</option><option>Manager</option><option>Cashier</option></select>
+        <button class="px-4 py-2 rounded-xl text-white" id="uAdd" style="background:#0ea5e9">+ Add User</button>
+      </div>
+      <div class="mt-3 overflow-x-auto">
+        <table class="w-full text-sm" id="uTable"><thead><tr><th>User</th><th>Role</th><th class="no-print">Actions</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+</main>
+<dialog class="rounded-2xl p-0 w-full max-w-2xl" id="itemModal">
+  <form class="p-4" method="dialog">
+    <h3 class="font-semibold text-lg mb-2" id="itemModalTitle">New Item</h3>
+    <div class="grid md:grid-cols-3 gap-3">
+      <div><label class="text-sm">SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSku" required/></div>
+      <div class="md:col-span-2"><label class="text-sm">Item Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mName" required/></div>
+      <div><label class="text-sm">Vehicle Make</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mMake"/></div>
+      <div><label class="text-sm">Vehicle Model</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mModel"/></div>
+      <div><label class="text-sm">Category</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mCat" placeholder="Brakes, Filters, ..."/></div>
+      <div><label class="text-sm">Buy Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBuy" step="0.01" type="number" value="0"/></div>
+      <div><label class="text-sm">Sell Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSell" step="0.01" type="number" value="0"/></div>
+      <div><label class="text-sm">Stock</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mStock" type="number" value="0"/></div>
+      <div><label class="text-sm">Reorder Level</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mReorder" type="number" value="5"/></div>
+      <div><label class="text-sm">Bin/Location</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBin" placeholder="Aisle 1 / Bin 3"/></div>
+      <div class="md:col-span-3"><label class="text-sm">Notes</label><textarea class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mNotes"></textarea></div>
+    </div>
+    <div class="mt-4 flex justify-end gap-2">
+      <button class="border rounded-xl px-4 py-2" value="cancel">Cancel</button>
+      <button class="px-4 py-2 rounded-xl text-white" id="mSave" style="background:#0ea5e9" value="default">Save</button>
+    </div>
+  </form>
+</dialog>
+<script src="config.js"></script>
+<script>
+// Local-only logic (same as previous attempt) – see previous cell for functions.
+</script>
+</body>
+</html>
