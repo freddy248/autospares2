@@ -1,251 +1,467 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1" name="viewport"/>
-<title>AutoSpares Pro — Sales & Inventory</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="manifest.json" rel="manifest"/>
-<meta content="#0ea5e9" name="theme-color"/>
 <script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW reg failed', err));
-    });
+// ===== Backend helper (global) =====
+if (!window.DATA_API || !window.API_KEY) {
+  document.getElementById('backendBanner')?.classList.remove('hidden');
+}
+window.backend = async function backend(action, payload = {}) {
+  const res = await fetch(window.DATA_API, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ key: window.API_KEY, action, payload })
+  });
+  return res.json();
+};
+
+// ===== Durable offline write queue =====
+const QUEUE_KEY = 'pendingWrites';
+let isFlushing = false;
+
+function qLoad(){ return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
+function qSave(q){ localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+function enqueue(action, payload){
+  const q = qLoad();
+  q.push({ action, payload, attempts:0, nextAttemptAt:0 });
+  qSave(q);
+}
+function backoffMs(attempts){ return Math.min(60000, Math.pow(2, attempts) * 1000); }
+
+async function flushQueue(){
+  if (!navigator.onLine || isFlushing) return;
+  isFlushing = true;
+  try{
+    let q = qLoad();
+    if (!q.length) return;
+    const now = Date.now();
+    let progressed = false;
+    for (let i=0; i<q.length; i++){
+      const job = q[i];
+      if ((job.nextAttemptAt||0) > now) continue;
+      try{
+        const r = await backend(job.action, job.payload);
+        if (r && r.ok){
+          q.splice(i,1); i--; progressed = true;
+        }else{
+          job.attempts = (job.attempts||0)+1;
+          job.nextAttemptAt = Date.now() + backoffMs(job.attempts);
+        }
+      }catch(e){
+        job.attempts = (job.attempts||0)+1;
+        job.nextAttemptAt = Date.now() + backoffMs(job.attempts);
+      }
+    }
+    qSave(q);
+    if (progressed && q.length) await flushQueue();
+  } finally {
+    isFlushing = false;
   }
+}
+window.addEventListener('online', flushQueue);
+setInterval(flushQueue, 5000);
+
+// ===== App state helpers =====
+const SKEY = (k) => `state.${k}`;
+const state = {
+  items: [], sales: [], grn: [], suppliers: [], users: [], settings: [],
+  user: null, role: 'Guest', cart: [], business: { name:'AutoSpares Pro', address:'Plot 123, Main Road, Lusaka', cur:'K' }
+};
+function loadState(){
+  for (const k of ['items','sales','grn','suppliers','users','settings']){
+    const v = localStorage.getItem(SKEY(k));
+    state[k] = v ? JSON.parse(v) : [];
+  }
+  const b = localStorage.getItem('business'); if (b) state.business = JSON.parse(b);
+  const u = localStorage.getItem('auth.user'); if (u) { const {user,role}=JSON.parse(u); state.user=user; state.role=role; }
+}
+function saveStatePart(k, val){ state[k]=val; localStorage.setItem(SKEY(k), JSON.stringify(val)); }
+function setBusiness(next){ state.business = { ...state.business, ...next }; localStorage.setItem('business', JSON.stringify(state.business)); }
+
+// ===== Sync pull (global) =====
+window.syncPull = async function syncPull(){
+  const r = await backend('syncPull');
+  if (r.ok){
+    const d = r.data||{};
+    for (const k of ['items','sales','grn','suppliers','users','settings']){
+      localStorage.setItem(SKEY(k), JSON.stringify(d[k]||[]));
+      state[k] = d[k]||[];
+    }
+    renderEverything();
+  } else {
+    console.warn('syncPull failed:', r.error);
+  }
+};
+
+// ===== Convenience: safe write wrappers (use these) =====
+async function saveItemsSafe(items){
+  if (navigator.onLine){
+    const r = await backend('upsertItems', items);
+    if (!r.ok) enqueue('upsertItems', items);
+  } else enqueue('upsertItems', items);
+}
+async function recordSaleSafe(lines){
+  if (navigator.onLine){
+    const r = await backend('recordSale', lines);
+    if (!r.ok) enqueue('recordSale', lines);
+  } else enqueue('recordSale', lines);
+}
+async function receiveGRNSafe(rows){
+  if (navigator.onLine){
+    const r = await backend('receiveGRN', rows);
+    if (!r.ok) enqueue('receiveGRN', rows);
+  } else enqueue('receiveGRN', rows);
+}
+
+// ===== UI wiring =====
+const $ = (q) => document.querySelector(q);
+const $$= (q) => Array.from(document.querySelectorAll(q));
+
+function showPage(id){
+  $$('#pages > div').forEach(el => el.classList.add('hidden'));
+  $(`#page-${id}`)?.classList.remove('hidden');
+}
+function setRole(role){ state.role = role; $('#activeRole').textContent = `Role: ${role}`; }
+
+// Nav
+$('#nav')?.addEventListener('click', (e)=>{
+  if (e.target?.dataset?.page) showPage(e.target.dataset.page);
+});
+
+// Demo login
+const DEMO = { admin:{pass:'admin123',role:'Admin'}, manager:{pass:'manager123',role:'Manager'}, cashier:{pass:'cashier123',role:'Cashier'} };
+$('#btnFillDemo')?.addEventListener('click', ()=>{
+  $('#loginUser').value='admin'; $('#loginPass').value='admin123';
+});
+$('#btnLogin')?.addEventListener('click', ()=>{
+  const u = $('#loginUser').value.trim().toLowerCase();
+  const p = $('#loginPass').value;
+  if (DEMO[u] && DEMO[u].pass===p){
+    state.user = u; setRole(DEMO[u].role);
+    localStorage.setItem('auth.user', JSON.stringify({user:u, role: state.role}));
+    $('#page-login').classList.add('hidden'); showPage('dashboard'); renderEverything();
+  } else {
+    alert('Invalid credentials (try admin/admin123, manager/manager123, cashier/cashier123)');
+  }
+});
+$('#btnLogout')?.addEventListener('click', ()=>{
+  localStorage.removeItem('auth.user'); state.user=null; setRole('Guest'); location.reload();
+});
+
+// ===== Inventory =====
+const itemModal = $('#itemModal');
+function openItemModal(edit=null){
+  $('#itemModalTitle').textContent = edit ? 'Edit Item' : 'New Item';
+  $('#mSku').value   = edit?.sku   || '';
+  $('#mName').value  = edit?.name  || '';
+  $('#mMake').value  = edit?.make  || '';
+  $('#mModel').value = edit?.model || '';
+  $('#mCat').value   = edit?.category || '';
+  $('#mBuy').value   = edit?.buy   ?? 0;
+  $('#mSell').value  = edit?.sell  ?? 0;
+  $('#mStock').value = edit?.stock ?? 0;
+  $('#mReorder').value = edit?.reorder ?? 5;
+  $('#mBin').value   = edit?.bin   || '';
+  $('#mNotes').value = edit?.notes || '';
+  itemModal.showModal();
+}
+$('#invAdd')?.addEventListener('click', ()=> openItemModal());
+$('#mSave')?.addEventListener('click', async (ev)=>{
+  ev.preventDefault();
+  const item = {
+    sku: $('#mSku').value.trim(),
+    name: $('#mName').value.trim(),
+    make: $('#mMake').value.trim(),
+    model: $('#mModel').value.trim(),
+    category: $('#mCat').value.trim(),
+    buy: parseFloat($('#mBuy').value||0),
+    sell: parseFloat($('#mSell').value||0),
+    stock: parseInt($('#mStock').value||0),
+    reorder: parseInt($('#mReorder').value||0),
+    bin: $('#mBin').value.trim(),
+    notes: $('#mNotes').value.trim()
+  };
+  if (!item.sku || !item.name){ alert('SKU and Item Name are required'); return; }
+  await saveItemsSafe([item]);
+  // optimistic local update
+  const idx = state.items.findIndex(x => x.sku===item.sku);
+  if (idx>=0) state.items[idx]=item; else state.items.push(item);
+  saveStatePart('items', state.items);
+  itemModal.close();
+  renderInventory(); renderDashboard();
+});
+$('#invExport')?.addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(state.items, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'autospares_items.json';
+  a.click();
+});
+
+// Inventory table render
+function renderInventory(filter=''){
+  const tb = $('#invTable tbody'); if (!tb) return;
+  const kw = $('#invSearch').value.trim().toLowerCase();
+  const rows = state.items
+    .filter(it => !kw || [it.sku,it.name,it.make,it.model,it.category].join(' ').toLowerCase().includes(kw))
+    .sort((a,b)=> (a.sku||'').localeCompare(b.sku||''));
+  tb.innerHTML = rows.map(it=>`
+    <tr class="border-b">
+      <td>${it.sku||''}</td><td>${it.name||''}</td><td>${it.make||''} ${it.model||''}</td>
+      <td>${(+it.buy||0).toFixed(2)}</td><td>${(+it.sell||0).toFixed(2)}</td>
+      <td>${(+it.stock||0)}</td><td>${(+it.reorder||0)}</td><td>${it.bin||''}</td>
+      <td class="no-print">
+        <button class="px-2 py-1 border rounded" data-edit="${it.sku}">Edit</button>
+      </td>
+    </tr>`).join('');
+  tb.querySelectorAll('[data-edit]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const sku = btn.getAttribute('data-edit');
+      const it = state.items.find(x=>x.sku===sku);
+      openItemModal(it);
+    });
+  });
+}
+$('#invSearch')?.addEventListener('input', ()=> renderInventory());
+
+// ===== Suppliers =====
+$('#supAdd')?.addEventListener('click', async ()=>{
+  const s = {
+    name: $('#supName').value.trim(),
+    phone: $('#supPhone').value.trim(),
+    email: $('#supEmail').value.trim()
+  };
+  if (!s.name){ alert('Supplier name required'); return; }
+  await receiveSuppliers([s]);
+});
+async function receiveSuppliers(arr){
+  if (navigator.onLine){
+    const r = await backend('upsertSuppliers', arr);
+    if (!r.ok) enqueue('upsertSuppliers', arr);
+  } else enqueue('upsertSuppliers', arr);
+  // optimistic local update
+  for (const s of arr){
+    const i = state.suppliers.findIndex(x=>x.name===s.name);
+    if (i>=0) state.suppliers[i]=s; else state.suppliers.push(s);
+  }
+  saveStatePart('suppliers', state.suppliers);
+  renderSuppliers(); fillSupplierSelect();
+}
+$('#supClear')?.addEventListener('click', ()=> { $('#supName').value=''; $('#supPhone').value=''; $('#supEmail').value=''; });
+function renderSuppliers(){
+  const tb = $('#supTable tbody'); if (!tb) return;
+  tb.innerHTML = state.suppliers.map(s=>`
+    <tr class="border-b"><td>${s.name||''}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td></td></tr>
+  `).join('');
+}
+function fillSupplierSelect(){
+  const sel = $('#grnSupplier'); if (!sel) return;
+  sel.innerHTML = `<option value="">Select supplier</option>` + state.suppliers.map(s=>`<option>${s.name}</option>`).join('');
+}
+
+// ===== GRN (Receive stock) =====
+$('#grnAdd')?.addEventListener('click', async ()=>{
+  const supplier = $('#grnSupplier').value.trim();
+  const sku = $('#grnSku').value.trim();
+  const qty = parseInt($('#grnQty').value||'1',10);
+  if (!supplier || !sku || !qty){ alert('Supplier, SKU and Qty required'); return; }
+
+  const row = { grnId: 'GRN-' + Date.now(), date: new Date().toISOString().slice(0,10), supplier, sku, qty, buy: 0, total: 0, clerk: state.user || 'system' };
+  await receiveGRNSafe([row]);
+
+  // adjust local stock
+  const it = state.items.find(x=>x.sku===sku);
+  if (it){ it.stock = (+it.stock||0)+qty; } else { alert('SKU not found in items; add the item first.'); }
+  saveStatePart('items', state.items);
+
+  // keep GRN list
+  state.grn.unshift(row);
+  saveStatePart('grn', state.grn);
+  renderGRN();
+  renderInventory();
+  renderDashboard();
+});
+$('#grnClear')?.addEventListener('click', ()=>{
+  $('#grnSupplier').value=''; $('#grnSku').value=''; $('#grnQty').value='1';
+});
+function renderGRN(){
+  const ul = $('#grnList'); if (!ul) return;
+  ul.innerHTML = state.grn.slice(0,10).map(g=>`<li> ${g.date} • <b>${g.sku}</b> × ${g.qty} from ${g.supplier}</li>`).join('');
+}
+
+// ===== POS (very small working version) =====
+function posFind(term){
+  const kw = term.toLowerCase();
+  return state.items.filter(it => [it.sku,it.name,it.make,it.model,it.category].join(' ').toLowerCase().includes(kw));
+}
+$('#posSearch')?.addEventListener('input', ()=>{
+  const box = $('#posSuggest');
+  const txt = $('#posSearch').value.trim();
+  if (!txt){ box.classList.add('hidden'); box.innerHTML=''; return; }
+  const hits = posFind(txt).slice(0,20);
+  box.innerHTML = hits.map(h=>`<div class="suggest-item" data-sku="${h.sku}">${h.sku} — ${h.name} (${h.sell||0})</div>`).join('');
+  box.classList.toggle('hidden', hits.length===0);
+  box.querySelectorAll('[data-sku]').forEach(d=> d.addEventListener('click', ()=> { addToCart(d.getAttribute('data-sku')); box.classList.add('hidden'); $('#posSearch').value=''; }));
+});
+$('#posAdd')?.addEventListener('click', ()=> {
+  const sku = $('#posSku').value.trim(); if (!sku) return;
+  addToCart(sku); $('#posSku').value='';
+});
+function addToCart(sku){
+  const it = state.items.find(x=>x.sku===sku);
+  if (!it){ alert('Item not found'); return; }
+  const ex = state.cart.find(x=>x.sku===sku);
+  if (ex){ ex.qty+=1; } else { state.cart.push({ sku: it.sku, name: it.name, price:+it.sell||0, qty:1 }); }
+  renderCart();
+}
+function renderCart(){
+  const tb = $('#posTable tbody'); if (!tb) return;
+  tb.innerHTML = state.cart.map((l,i)=>`
+    <tr class="border-b">
+      <td>${l.sku}</td><td>${l.name}</td>
+      <td><input type="number" min="0" value="${l.price}" data-price="${i}" class="w-24 border rounded px-2 py-1"/></td>
+      <td><input type="number" min="1" value="${l.qty}" data-qty="${i}" class="w-16 border rounded px-2 py-1"/></td>
+      <td>${(l.price*l.qty).toFixed(2)}</td>
+      <td class="no-print"><button data-rm="${i}" class="border rounded px-2 py-1">X</button></td>
+    </tr>`).join('');
+  tb.querySelectorAll('[data-rm]').forEach(b=> b.addEventListener('click', ()=>{ state.cart.splice(+b.getAttribute('data-rm'),1); renderCart(); }));
+  tb.querySelectorAll('[data-qty]').forEach(inp=> inp.addEventListener('input', ()=>{ const i=+inp.dataset.qty; state.cart[i].qty = Math.max(1, +inp.value||1); renderCart(); }));
+  tb.querySelectorAll('[data-price]').forEach(inp=> inp.addEventListener('input', ()=>{ const i=+inp.dataset.price; state.cart[i].price = Math.max(0, +inp.value||0); renderCart(); }));
+  calcTotals();
+}
+function calcTotals(){
+  const sub = state.cart.reduce((s,l)=> s + l.price*l.qty, 0);
+  const discount = +($('#posDiscount').value||0);
+  const vatPct = +($('#posVat').value||0);
+  const vat = ((sub - discount) * vatPct)/100;
+  const tot = sub - discount + vat;
+  $('#posSubtotal').textContent = sub.toFixed(2);
+  $('#posDiscountAmt').textContent = discount.toFixed(2);
+  $('#posVatAmt').textContent = vat.toFixed(2);
+  $('#posTotal').textContent = tot.toFixed(2);
+  $('#posPrint').disabled = state.cart.length===0;
+}
+$('#posDiscount')?.addEventListener('input', calcTotals);
+$('#posVat')?.addEventListener('input', calcTotals);
+$('#posClear')?.addEventListener('click', ()=> { state.cart=[]; renderCart(); });
+
+$('#posPay')?.addEventListener('click', async ()=>{
+  if (!state.cart.length) return alert('Cart is empty');
+  const today = new Date().toISOString().slice(0,10);
+  const invoiceId = 'INV-'+Date.now();
+  const vatPct = +($('#posVat').value||0);
+  const discount = +($('#posDiscount').value||0);
+  // create sale lines
+  const lines = state.cart.map(l => ({
+    invoiceId, date: today, sku: l.sku, qty: l.qty, price: l.price,
+    discount: 0, vat: ((l.price*l.qty - (discount/state.cart.length)) * vatPct)/100,
+    total: (l.price*l.qty), cashier: state.user || 'cashier'
+  }));
+  await recordSaleSafe(lines);
+  // reduce local stock
+  for (const l of state.cart){
+    const it = state.items.find(x=>x.sku===l.sku);
+    if (it) it.stock = Math.max(0, (+it.stock||0) - l.qty);
+  }
+  saveStatePart('items', state.items);
+  // save sale locally
+  state.sales.push(...lines);
+  saveStatePart('sales', state.sales);
+  renderDashboard(); renderInventory();
+  // print-ready receipt
+  fillReceipt(invoiceId, today, lines);
+  $('#posPrint').disabled = false;
+  alert('Payment processed');
+  state.cart=[]; renderCart();
+});
+$('#posPrint')?.addEventListener('click', ()=> {
+  $('#receipt').classList.remove('hidden'); window.print(); $('#receipt').classList.add('hidden');
+});
+function fillReceipt(inv,date,lines){
+  $('#rcptName').textContent = state.business.name;
+  $('#rcptAddress').textContent = state.business.address;
+  $('#rcptInv').textContent = inv;
+  $('#rcptDate').textContent = date;
+  const tbody = $('#rcptBody'); tbody.innerHTML='';
+  let sub=0; lines.forEach(l=>{ sub += l.price*l.qty; tbody.insertAdjacentHTML('beforeend', `<tr><td>${l.sku} - ${l.name||''}</td><td>${l.qty}</td><td>${l.price.toFixed(2)}</td><td>${(l.price*l.qty).toFixed(2)}</td></tr>`); });
+  const discount = +($('#posDiscount').value||0);
+  const vat = +($('#posVatAmt').textContent||0);
+  const total = +($('#posTotal').textContent||0);
+  $('#rcptSub').textContent = sub.toFixed(2);
+  $('#rcptDis').textContent = discount.toFixed(2);
+  $('#rcptVat').textContent = vat.toFixed(2);
+  $('#rcptTot').textContent = total.toFixed(2);
+}
+
+// ===== Sales (table & filters) =====
+$('#salesFilter')?.addEventListener('click', renderSales);
+$('#salesPrint')?.addEventListener('click', ()=> window.print());
+function renderSales(){
+  const from = $('#salesFrom').value || '0000-01-01';
+  const to   = $('#salesTo').value   || '9999-12-31';
+  const tb = $('#salesTable tbody'); if (!tb) return;
+  const rows = state.sales.filter(s => s.date>=from && s.date<=to);
+  const byInvoice = rows.reduce((m, r)=> {
+    const k = r.invoiceId; (m[k]=m[k]||{total:0, items:0, cashier:r.cashier, date:r.date}).total += +r.total||0; m[k].items += r.qty||0; return m;
+  }, {});
+  tb.innerHTML = Object.entries(byInvoice).map(([inv, info])=>`
+    <tr class="border-b"><td>${info.date}</td><td>${inv}</td><td>${info.items}</td><td>${info.total.toFixed(2)}</td><td>${info.cashier}</td></tr>
+  `).join('');
+}
+
+// ===== Settings =====
+$('#uAdd')?.addEventListener('click', ()=>{
+  const name = $('#uName').value.trim();
+  const pass = $('#uPass').value.trim();
+  const role = $('#uRole').value;
+  if (!name || !pass) return alert('User and password required');
+  // local-only demo users (you can later move to backend)
+  const users = state.users || [];
+  const exists = users.find(u=>u.username===name);
+  if (exists){ exists.role=role; } else users.push({ username:name, role, passwordHash: pass });
+  saveStatePart('users', users);
+  renderUsers();
+});
+function renderUsers(){
+  const tb = $('#uTable tbody'); if (!tb) return;
+  tb.innerHTML = (state.users||[]).map(u=>`<tr class="border-b"><td>${u.username}</td><td>${u.role}</td><td></td></tr>`).join('');
+}
+// Business settings save (live as you type)
+$('#setName')?.addEventListener('input', e=> { setBusiness({name:e.target.value}); });
+$('#setAddress')?.addEventListener('input', e=> { setBusiness({address:e.target.value}); });
+$('#setCur')?.addEventListener('input', e=> { setBusiness({cur:e.target.value}); });
+
+// ===== Dashboard / KPIs =====
+function renderDashboard(){
+  const itemsCount = state.items.length;
+  const stockSum   = state.items.reduce((s,it)=> s + (+it.stock||0), 0);
+  const today = new Date().toISOString().slice(0,10);
+  const todaySales = state.sales.filter(s=>s.date===today).reduce((s,r)=> s + (+r.total||0), 0);
+  const low = state.items.filter(it => (+it.stock||0) <= (+it.reorder||0)).length;
+
+  $('#kpiItems').textContent = itemsCount;
+  $('#kpiStock').textContent = stockSum;
+  $('#kpiToday').textContent = (todaySales||0).toFixed(2);
+  $('#kpiLow').textContent = low;
+
+  // Top selling (by qty)
+  const sold = state.sales.reduce((m, r)=> { m[r.sku]=(m[r.sku]||0)+(+r.qty||0); return m; }, {});
+  const top = Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  $('#topSelling').innerHTML = top.map(([sku,qty])=>`<li>${sku} — <b>${qty}</b></li>`).join('') || '<li class="text-slate-400">No sales yet</li>';
+  // Low stock list
+  $('#lowStock').innerHTML = state.items.filter(it => (+it.stock||0) <= (+it.reorder||0))
+    .slice(0,8).map(it=>`<li>${it.sku} — <b>${it.stock||0}</b> (≤ ${it.reorder||0})</li>`).join('') || '<li class="text-slate-400">None</li>';
+}
+
+// ===== Initial boot =====
+loadState();
+$('#setName').value = state.business.name;
+$('#setAddress').value = state.business.address;
+$('#setCur').value = state.business.cur;
+setRole(state.role);
+renderUsers(); renderSuppliers(); fillSupplierSelect(); renderInventory(); renderGRN(); renderSales(); renderDashboard();
+
+// Pull now + poll, and try flush queue
+window.addEventListener('load', ()=>{
+  syncPull();
+  setInterval(syncPull, 8000);
+  flushQueue();
+});
 </script>
-<style>
-  :root { --brand:#0ea5e9; }
-  .brand { color: var(--brand); }
-  .brand-bg { background: var(--brand); }
-  @media print { .no-print{display:none!important} .print-area{padding:0!important;box-shadow:none!important} body{background:white} }
-  .suggest-item{padding:.5rem .75rem;cursor:pointer}
-  .suggest-item:hover{background:#f1f5f9}
-</style>
-</head>
-<body class="bg-slate-50 min-h-screen text-slate-800">
-<div id="backendBanner" class="hidden text-sm text-amber-900 bg-amber-100 border border-amber-200 px-4 py-2">
-  Backend not configured — edit <b>config.js</b> and set <code>DATA_API</code> and <code>API_KEY</code>.
-</div>
-<header class="no-print sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
-  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-xl brand-bg grid place-items-center text-white font-bold">AS</div>
-      <div>
-        <h1 class="text-lg font-semibold">AutoSpares <span class="brand">Pro</span></h1>
-        <p class="text-xs text-slate-500">Sales & Inventory Management</p>
-      </div>
-    </div>
-    <div class="flex items-center gap-2" id="topUserBar">
-      <span class="pill" id="activeRole">Role: Guest</span>
-      <button class="btn" id="btnBackup">Backup</button>
-      <button class="btn" id="btnRestore">Restore</button>
-      <label class="btn cursor-pointer">Import <input accept="application/json" class="hidden" id="importFile" type="file"/></label>
-      <button class="btn" id="btnLogout">Logout</button>
-    </div>
-  </div>
-</header>
-<main class="max-w-7xl mx-auto p-4 grid md:grid-cols-12 gap-4">
-  <aside class="no-print md:col-span-3 lg:col-span-2">
-    <nav class="bg-white rounded-2xl shadow-md p-4 space-y-2" id="nav">
-      <button class="w-full border rounded-xl px-4 py-2" data-page="dashboard">📊 Dashboard</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="pos">🧾 Point of Sale</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="inventory">📦 Inventory</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="purchases">📥 Purchases/GRN</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="sales">📚 Sales Records</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="suppliers">🏭 Suppliers</button>
-      <button class="w-full border rounded-xl px-4 py-2" data-page="settings">⚙️ Settings</button>
-    </nav>
-    <div class="bg-white rounded-2xl shadow-md p-4 mt-4 space-y-3" id="quickKpis">
-      <div class="flex items-center justify-between"><span class="text-slate-500">Items</span><b id="kpiItems">0</b></div>
-      <div class="flex items-center justify-between"><span class="text-slate-500">On‑hand Stock</span><b id="kpiStock">0</b></div>
-      <div class="flex items-center justify-between"><span class="text-slate-500">Today Sales (K)</span><b id="kpiToday">0.00</b></div>
-      <div class="flex items-center justify-between"><span class="text-slate-500">Low Stock</span><b id="kpiLow">0</b></div>
-    </div>
-  </aside>
-  <section class="md:col-span-9 lg:col-span-10 space-y-4" id="pages">
-    <div class="bg-white rounded-2xl shadow-md p-4 max-w-lg mx-auto" id="page-login">
-      <h2 class="text-xl font-semibold mb-2">Login</h2>
-      <p class="text-sm text-slate-500 mb-4">Demo users: <b>admin/admin123</b>, <b>manager/manager123</b>, <b>cashier/cashier123</b></p>
-      <div class="grid md:grid-cols-2 gap-3">
-        <div><label class="text-sm">Username</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginUser" placeholder="e.g. admin"/></div>
-        <div><label class="text-sm">Password</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginPass" placeholder="••••••" type="password"/></div>
-      </div>
-      <div class="flex items-center gap-2 mt-4">
-        <button class="px-4 py-2 rounded-xl text-white" id="btnLogin" style="background:#0ea5e9">Login</button>
-        <button class="border rounded-xl px-4 py-2" id="btnFillDemo">Fill demo</button>
-      </div>
-    </div>
-    <div class="hidden" id="page-dashboard">
-      <div class="grid lg:grid-cols-3 gap-4">
-        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Today Summary</h3>
-          <div class="grid grid-cols-2 gap-3 text-sm">
-            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Invoices</div><div class="text-xl font-bold" id="dashInvoices">0</div></div>
-            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Sales (K)</div><div class="text-xl font-bold" id="dashSales">0.00</div></div>
-            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Avg. Basket (K)</div><div class="text-xl font-bold" id="dashAvg">0.00</div></div>
-            <div class="p-3 rounded-xl bg-slate-50"><div class="text-slate-500">Items Sold</div><div class="text-xl font-bold" id="dashUnits">0</div></div>
-          </div>
-        </div>
-        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Top Selling</h3><ul class="space-y-2 text-sm" id="topSelling"></ul></div>
-        <div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Low Stock</h3><ul class="space-y-2 text-sm" id="lowStock"></ul></div>
-      </div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-pos">
-      <div class="flex flex-col md:flex-row md:items-end gap-3">
-        <div class="flex-1 relative">
-          <label class="text-sm">Search Item</label>
-          <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSearch" placeholder="Type part name, SKU or vehicle"/>
-          <div class="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto hidden" id="posSuggest"></div>
-        </div>
-        <div><label class="text-sm">Add by SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSku" placeholder="e.g. BRK-001"/></div>
-        <button class="px-4 py-2 rounded-xl text-white" id="posAdd" style="background:#0ea5e9">Add</button>
-      </div>
-      <div class="mt-4 overflow-x-auto">
-        <table class="w-full text-sm" id="posTable">
-          <thead><tr><th>SKU</th><th>Item</th><th>Price (K)</th><th>Qty</th><th>Line Total</th><th class="no-print">Remove</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="grid md:grid-cols-4 gap-3 mt-4">
-        <div class="bg-white rounded-2xl shadow p-4 border">
-          <label class="text-sm">Discount (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posDiscount" min="0" type="number" value="0"/>
-          <label class="text-sm mt-2">VAT %</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posVat" min="0" type="number" value="16"/>
-        </div>
-        <div class="bg-white rounded-2xl shadow p-4 border md:col-span-2">
-          <div class="flex items-center justify-between text-sm"><span>Subtotal</span><b id="posSubtotal">0.00</b></div>
-          <div class="flex items-center justify-between text-sm"><span>Discount</span><b id="posDiscountAmt">0.00</b></div>
-          <div class="flex items-center justify-between text-sm"><span>VAT</span><b id="posVatAmt">0.00</b></div>
-          <div class="flex items-center justify-between text-lg mt-2"><span>Total</span><b id="posTotal">0.00</b></div>
-        </div>
-        <div class="flex flex-col gap-2">
-          <button class="px-4 py-2 rounded-xl text-white" id="posPay" style="background:#0ea5e9">Process Payment</button>
-          <button class="border rounded-xl px-4 py-2" disabled="true" id="posPrint">Print Invoice</button>
-          <button class="border rounded-xl px-4 py-2" id="posClear">Clear</button>
-        </div>
-      </div>
-      <div class="mt-4 bg-white rounded-2xl shadow-md p-4 print-area hidden" id="receipt">
-        <div class="text-center">
-          <h2 class="font-semibold" id="rcptName"></h2>
-          <div class="text-xs text-slate-500" id="rcptAddress">Plot 123, Main Road, Lusaka</div>
-        </div>
-        <div class="text-xs mt-2 flex items-center justify-between">
-          <div>Invoice: <span id="rcptInv"></span></div>
-          <div>Date: <span id="rcptDate"></span></div>
-        </div>
-        <table class="w-full text-sm mt-2">
-          <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
-          <tbody id="rcptBody"></tbody>
-        </table>
-        <div class="text-sm mt-2 flex flex-col items-end gap-1">
-          <div>Subtotal: <b id="rcptSub"></b></div>
-          <div>Discount: <b id="rcptDis"></b></div>
-          <div>VAT: <b id="rcptVat"></b></div>
-          <div class="text-lg">Total: <b id="rcptTot"></b></div>
-        </div>
-      </div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-inventory">
-      <div class="flex flex-col md:flex-row md:items-end gap-3">
-        <div class="flex-1"><label class="text-sm">Search</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="invSearch" placeholder="Part, SKU, Make/Model"/></div>
-        <div class="grid grid-cols-2 gap-2">
-          <button class="px-4 py-2 rounded-xl text-white" id="invAdd" style="background:#0ea5e9">+ New Item</button>
-          <button class="border rounded-xl px-4 py-2" id="invExport">Export</button>
-        </div>
-      </div>
-      <div class="overflow-x-auto mt-3">
-        <table class="w-full text-sm" id="invTable">
-          <thead><tr><th>SKU</th><th>Item</th><th>Make/Model</th><th>Buy (K)</th><th>Sell (K)</th><th>Stock</th><th>Reorder</th><th>Bin</th><th class="no-print">Actions</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-purchases">
-      <div class="grid md:grid-cols-4 gap-3">
-        <div class="md:col-span-2"><label class="text-sm">Supplier</label><select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSupplier"></select></div>
-        <div><label class="text-sm">SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSku" placeholder="Existing item SKU"/></div>
-        <div><label class="text-sm">Qty</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnQty" min="1" type="number" value="1"/></div>
-      </div>
-      <div class="flex gap-2 mt-3">
-        <button class="px-4 py-2 rounded-xl text-white" id="grnAdd" style="background:#0ea5e9">Receive Stock</button>
-        <button class="border rounded-xl px-4 py-2" id="grnClear">Clear</button>
-      </div>
-      <div class="mt-4"><h3 class="font-semibold mb-2">Recent GRNs</h3><ul class="text-sm space-y-1" id="grnList"></ul></div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-sales">
-      <div class="grid md:grid-cols-4 gap-3 mb-3">
-        <div><label class="text-sm">From</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesFrom" type="date"/></div>
-        <div><label class="text-sm">To</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesTo" type="date"/></div>
-        <div class="md:col-span-2 flex items-end gap-2"><button class="px-4 py-2 rounded-xl text-white" id="salesFilter" style="background:#0ea5e9">Filter</button><button class="border rounded-xl px-4 py-2" id="salesPrint">Print Daily Summary</button></div>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm" id="salesTable">
-          <thead><tr><th>Date</th><th>Invoice</th><th>Items</th><th>Total (K)</th><th>Cashier</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-suppliers">
-      <div class="grid md:grid-cols-3 gap-3">
-        <div><label class="text-sm">Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supName"/></div>
-        <div><label class="text-sm">Phone</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supPhone"/></div>
-        <div><label class="text-sm">Email</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supEmail"/></div>
-      </div>
-      <div class="flex gap-2 mt-3">
-        <button class="px-4 py-2 rounded-xl text-white" id="supAdd" style="background:#0ea5e9">Add Supplier</button>
-        <button class="border rounded-xl px-4 py-2" id="supClear">Clear</button>
-      </div>
-      <div class="mt-3">
-        <table class="w-full text-sm" id="supTable">
-          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th class="no-print">Actions</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-settings">
-      <h3 class="font-semibold mb-2">Business Settings</h3>
-      <div class="grid md:grid-cols-3 gap-3">
-        <div><label class="text-sm">Business Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setName" placeholder="AutoSpares Pro"/></div>
-        <div><label class="text-sm">Address</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setAddress" placeholder="Plot 123, Main Road, Lusaka"/></div>
-        <div><label class="text-sm">Currency Symbol</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setCur" value="K"/></div>
-      </div>
-      <h3 class="font-semibold mt-4 mb-2">Users</h3>
-      <div class="grid md:grid-cols-4 gap-3">
-        <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uName" placeholder="username"/>
-        <input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uPass" placeholder="password"/>
-        <select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uRole"><option>Admin</option><option>Manager</option><option>Cashier</option></select>
-        <button class="px-4 py-2 rounded-xl text-white" id="uAdd" style="background:#0ea5e9">+ Add User</button>
-      </div>
-      <div class="mt-3 overflow-x-auto">
-        <table class="w-full text-sm" id="uTable"><thead><tr><th>User</th><th>Role</th><th class="no-print">Actions</th></tr></thead><tbody></tbody></table>
-      </div>
-    </div>
-  </section>
-</main>
-<dialog class="rounded-2xl p-0 w-full max-w-2xl" id="itemModal">
-  <form class="p-4" method="dialog">
-    <h3 class="font-semibold text-lg mb-2" id="itemModalTitle">New Item</h3>
-    <div class="grid md:grid-cols-3 gap-3">
-      <div><label class="text-sm">SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSku" required/></div>
-      <div class="md:col-span-2"><label class="text-sm">Item Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mName" required/></div>
-      <div><label class="text-sm">Vehicle Make</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mMake"/></div>
-      <div><label class="text-sm">Vehicle Model</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mModel"/></div>
-      <div><label class="text-sm">Category</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mCat" placeholder="Brakes, Filters, ..."/></div>
-      <div><label class="text-sm">Buy Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBuy" step="0.01" type="number" value="0"/></div>
-      <div><label class="text-sm">Sell Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSell" step="0.01" type="number" value="0"/></div>
-      <div><label class="text-sm">Stock</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mStock" type="number" value="0"/></div>
-      <div><label class="text-sm">Reorder Level</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mReorder" type="number" value="5"/></div>
-      <div><label class="text-sm">Bin/Location</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBin" placeholder="Aisle 1 / Bin 3"/></div>
-      <div class="md:col-span-3"><label class="text-sm">Notes</label><textarea class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mNotes"></textarea></div>
-    </div>
-    <div class="mt-4 flex justify-end gap-2">
-      <button class="border rounded-xl px-4 py-2" value="cancel">Cancel</button>
-      <button class="px-4 py-2 rounded-xl text-white" id="mSave" style="background:#0ea5e9" value="default">Save</button>
-    </div>
-  </form>
-</dialog>
-<script src="config.js"></script>
-<script>
-// Local-only logic (same as previous attempt) – see previous cell for functions.
-</script>
-</body>
-</html>
