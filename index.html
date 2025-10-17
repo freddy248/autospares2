@@ -1,8 +1,853 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>AutoSpares Pro — Sales &amp; Inventory</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="manifest.json" rel="manifest"/>
+<meta content="#0ea5e9" name="theme-color"/>
 <script>
-// ===== Backend helper (global) =====
-if (!window.DATA_API || !window.API_KEY) {
-  document.getElementById('backendBanner')?.classList.remove('hidden');
-}
+    // PWA Service Worker Registration
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW reg failed', err));
+      });
+    }
+  </script>
+<style>
+    :root { --brand:#0ea5e9; }
+    .brand { color: var(--brand); }
+    .brand-bg { background: var(--brand); }
+    .card { /* utility via Tailwind with progressive enhancement */ }
+    .pill { }
+    .btn { }
+    .btn-primary { }
+    .btn-danger { }
+    .input { }
+    .table { }
+    .table th { }
+    .table td { }
+    .badge { }
+    .hidden-print { }
+    @media print {
+      .no-print { display:none !important; }
+      .print-area { padding: 0 !important; box-shadow: none !important; }
+      body { background: white; }
+    }
+  
+/* autosuggest */
+.suggest-item{padding:.5rem .75rem;cursor:pointer}
+.suggest-item:hover{background:#f1f5f9}
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+<!-- Install banner (optional) -->
+<div class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 bg-white shadow-xl rounded-xl px-4 py-2 flex items-center gap-3 z-50" id="installBanner">
+<span>Install AutoSpares Pro?</span>
+<button class="px-3 py-1 rounded-lg text-white" id="btnInstall" style="background:#0ea5e9">Install</button>
+<button class="px-3 py-1 rounded-lg border" id="btnDismiss">Dismiss</button>
+</div>
+<!-- Top Bar -->
+<header class="no-print sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
+<div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-9 h-9 rounded-xl brand-bg grid place-items-center text-white font-bold">AS</div>
+<div>
+<h1 class="text-lg font-semibold">AutoSpares <span class="brand">Pro</span></h1>
+<p class="text-xs text-slate-500">Sales &amp; Inventory Management</p>
+</div>
+</div>
+<div class="flex items-center gap-2" id="topUserBar">
+<span class="pill" id="activeRole">Role: Guest</span>
+<button class="btn" id="btnBackup">Backup</button>
+<button class="btn" id="btnRestore">Restore</button>
+<label class="btn cursor-pointer">
+          Import <input accept="application/json" class="hidden" id="importFile" type="file"/>
+</label>
+<button class="btn" id="btnLogout">Logout</button>
+</div>
+</div>
+</header>
+<!-- App Container -->
+<main class="max-w-7xl mx-auto p-4 grid md:grid-cols-12 gap-4">
+<!-- Sidebar Navigation -->
+<aside class="no-print md:col-span-3 lg:col-span-2">
+<nav class="bg-white rounded-2xl shadow-md p-4 space-y-2" id="nav">
+<button class="w-full border rounded-xl px-4 py-2" data-page="dashboard" id="navDashboard">📊 Dashboard</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="pos" id="navPOS">🧾 Point of Sale</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="inventory" id="navInventory">📦 Inventory</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="purchases" id="navPurchases">📥 Purchases/GRN</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="sales" id="navSales">📚 Sales Records</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="suppliers" id="navSuppliers">🏭 Suppliers</button>
+<button class="w-full border rounded-xl px-4 py-2" data-page="settings" id="navSettings">⚙️ Settings</button>
+</nav>
+<!-- Quick KPIs -->
+<div class="bg-white rounded-2xl shadow-md p-4 mt-4 space-y-3" id="quickKpis">
+<div class="flex items-center justify-between"><span class="text-slate-500">Items</span><b id="kpiItems">0</b></div>
+<div class="flex items-center justify-between"><span class="text-slate-500">On‑hand Stock</span><b id="kpiStock">0</b></div>
+<div class="flex items-center justify-between"><span class="text-slate-500">Today Sales (K)</span><b id="kpiToday">0.00</b></div>
+<div class="flex items-center justify-between"><span class="text-slate-500">Low Stock</span><b id="kpiLow">0</b></div>
+</div>
+</aside>
+<!-- Page Content -->
+<section class="md:col-span-9 lg:col-span-10 space-y-4" id="pages">
+<!-- Login Page -->
+<div class="bg-white rounded-2xl shadow-md p-4 max-w-lg mx-auto" id="page-login">
+<h2 class="text-xl font-semibold mb-2">Login</h2>
+<p class="text-sm text-slate-500 mb-4">Demo users: <b>admin/admin123</b>, <b>manager/manager123</b>, <b>cashier/cashier123</b></p>
+<div class="grid md:grid-cols-2 gap-3">
+<div>
+<label class="text-sm">Username</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginUser" placeholder="e.g. admin"/>
+</div>
+<div>
+<label class="text-sm">Password</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="loginPass" placeholder="••••••" type="password"/>
+</div>
+</div>
+<div class="flex items-center gap-2 mt-4">
+<button class="px-4 py-2 rounded-xl text-white" id="btnLogin" style="background:#0ea5e9">Login</button>
+<button class="border rounded-xl px-4 py-2" id="btnFillDemo">Fill demo</button>
+</div>
+</div>
+<!-- Dashboard -->
+<div class="hidden" id="page-dashboard">
+<div class="grid lg:grid-cols-3 gap-4">
+<div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Today Summary</h3>
+<div class="grid grid-cols-2 gap-3 text-sm">
+<div class="p-3 rounded-xl bg-slate-50">
+<div class="text-slate-500">Invoices</div>
+<div class="text-xl font-bold" id="dashInvoices">0</div>
+</div>
+<div class="p-3 rounded-xl bg-slate-50">
+<div class="text-slate-500">Sales (K)</div>
+<div class="text-xl font-bold" id="dashSales">0.00</div>
+</div>
+<div class="p-3 rounded-xl bg-slate-50">
+<div class="text-slate-500">Avg. Basket (K)</div>
+<div class="text-xl font-bold" id="dashAvg">0.00</div>
+</div>
+<div class="p-3 rounded-xl bg-slate-50">
+<div class="text-slate-500">Items Sold</div>
+<div class="text-xl font-bold" id="dashUnits">0</div>
+</div>
+</div>
+</div>
+<div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Top Selling</h3>
+<ul class="space-y-2 text-sm" id="topSelling"></ul>
+</div>
+<div class="bg-white rounded-2xl shadow-md p-4"><h3 class="font-semibold mb-2">Low Stock</h3>
+<ul class="space-y-2 text-sm" id="lowStock"></ul>
+</div>
+</div>
+</div>
+<!-- POS Page -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-pos">
+<div class="flex flex-col md:flex-row md:items-end gap-3">
+<div class="flex-1 relative">
+<label class="text-sm">Search Item</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSearch" placeholder="Type part name, SKU or vehicle"/>
+<div class="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto hidden" id="posSuggest"></div></div>
+<div>
+<label class="text-sm">Add by SKU</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posSku" placeholder="e.g. BRK-001"/>
+</div>
+<button class="px-4 py-2 rounded-xl text-white" id="posAdd" style="background:#0ea5e9">Add</button>
+</div>
+<div class="mt-4 overflow-x-auto">
+<table class="w-full text-sm" id="posTable">
+<thead><tr>
+<th>SKU</th><th>Item</th><th>Price (K)</th><th>Qty</th><th>Line Total</th><th class="no-print">Remove</th>
+</tr></thead>
+<tbody></tbody>
+</table>
+</div>
+<div class="grid md:grid-cols-4 gap-3 mt-4">
+<div class="bg-white rounded-2xl shadow p-4 border">
+<label class="text-sm">Discount (K)</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posDiscount" min="0" type="number" value="0"/>
+<label class="text-sm mt-2">VAT %</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="posVat" min="0" type="number" value="16"/>
+</div>
+<div class="bg-white rounded-2xl shadow p-4 border md:col-span-2">
+<div class="flex items-center justify-between text-sm"><span>Subtotal</span><b id="posSubtotal">0.00</b></div>
+<div class="flex items-center justify-between text-sm"><span>Discount</span><b id="posDiscountAmt">0.00</b></div>
+<div class="flex items-center justify-between text-sm"><span>VAT</span><b id="posVatAmt">0.00</b></div>
+<div class="flex items-center justify-between text-lg mt-2"><span>Total</span><b id="posTotal">0.00</b></div>
+</div>
+<div class="flex flex-col gap-2">
+<button class="px-4 py-2 rounded-xl text-white" id="posPay" style="background:#0ea5e9">Process Payment</button>
+<button class="border rounded-xl px-4 py-2" disabled="True" id="posPrint">Print Invoice</button><button class="border rounded-xl px-4 py-2" id="posClear">Clear</button>
+</div>
+</div>
+<!-- Printable Receipt -->
+<div class="mt-4 bg-white rounded-2xl shadow-md p-4 print-area hidden" id="receipt">
+<div class="text-center">
+<h2 class="font-semibold" id="rcptName"></h2>
+<div class="text-xs text-slate-500" id="rcptAddress">Plot 123, Main Road, Lusaka</div>
+</div>
+<div class="text-xs mt-2 flex items-center justify-between">
+<div>Invoice: <span id="rcptInv"></span></div>
+<div>Date: <span id="rcptDate"></span></div>
+</div>
+<table class="w-full text-sm mt-2">
+<thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+<tbody id="rcptBody"></tbody>
+</table>
+<div class="text-sm mt-2 flex flex-col items-end gap-1">
+<div>Subtotal: <b id="rcptSub"></b></div>
+<div>Discount: <b id="rcptDis"></b></div>
+<div>VAT: <b id="rcptVat"></b></div>
+<div class="text-lg">Total: <b id="rcptTot"></b></div>
+</div>
+</div>
+</div>
+<!-- Inventory Page -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-inventory">
+<div class="flex flex-col md:flex-row md:items-end gap-3">
+<div class="flex-1">
+<label class="text-sm">Search</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="invSearch" placeholder="Part, SKU, Make/Model"/>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<button class="px-4 py-2 rounded-xl text-white" id="invAdd" style="background:#0ea5e9">+ New Item</button>
+<button class="border rounded-xl px-4 py-2" id="invExport">Export</button>
+</div>
+</div>
+<div class="overflow-x-auto mt-3">
+<table class="w-full text-sm" id="invTable">
+<thead><tr><th>SKU</th><th>Item</th><th>Make/Model</th><th>Buy (K)</th><th>Sell (K)</th><th>Stock</th><th>Reorder</th><th>Bin</th><th class="no-print">Actions</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
+<!-- Purchases Page -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-purchases">
+<div class="grid md:grid-cols-4 gap-3">
+<div class="md:col-span-2">
+<label class="text-sm">Supplier</label>
+<select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSupplier"></select>
+</div>
+<div>
+<label class="text-sm">SKU</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnSku" placeholder="Existing item SKU"/>
+</div>
+<div>
+<label class="text-sm">Qty</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="grnQty" min="1" type="number" value="1"/>
+</div>
+</div>
+<div class="flex gap-2 mt-3">
+<button class="px-4 py-2 rounded-xl text-white" id="grnAdd" style="background:#0ea5e9">Receive Stock</button>
+<button class="border rounded-xl px-4 py-2" id="grnClear">Clear</button>
+</div>
+<div class="mt-4">
+<h3 class="font-semibold mb-2">Recent GRNs</h3>
+<ul class="text-sm space-y-1" id="grnList"></ul>
+</div>
+</div>
+<!-- Sales Records -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-sales">
+<div class="grid md:grid-cols-4 gap-3 mb-3">
+<div>
+<label class="text-sm">From</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesFrom" type="date"/>
+</div>
+<div>
+<label class="text-sm">To</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="salesTo" type="date"/>
+</div>
+<div class="md:col-span-2 flex items-end gap-2">
+<button class="px-4 py-2 rounded-xl text-white" id="salesFilter" style="background:#0ea5e9">Filter</button>
+<button class="border rounded-xl px-4 py-2" id="salesPrint">Print Daily Summary</button>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm" id="salesTable">
+<thead><tr><th>Date</th><th>Invoice</th><th>Items</th><th>Total (K)</th><th>Cashier</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
+<!-- Suppliers Page -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-suppliers">
+<div class="grid md:grid-cols-3 gap-3">
+<div>
+<label class="text-sm">Name</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supName"/>
+</div>
+<div>
+<label class="text-sm">Phone</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supPhone"/>
+</div>
+<div>
+<label class="text-sm">Email</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="supEmail"/>
+</div>
+</div>
+<div class="flex gap-2 mt-3">
+<button class="px-4 py-2 rounded-xl text-white" id="supAdd" style="background:#0ea5e9">Add Supplier</button>
+<button class="border rounded-xl px-4 py-2" id="supClear">Clear</button>
+</div>
+<div class="mt-3">
+<table class="w-full text-sm" id="supTable">
+<thead><tr><th>Name</th><th>Phone</th><th>Email</th><th class="no-print">Actions</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
+</div>
+<!-- Settings Page -->
+<div class="hidden bg-white rounded-2xl shadow-md p-4" id="page-settings">
+<h3 class="font-semibold mb-2">Business Settings</h3>
+<div class="grid md:grid-cols-3 gap-3">
+<div>
+<label class="text-sm">Business Name</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setName" placeholder="AutoSpares Pro"/>
+</div>
+<div>
+<label class="text-sm">Address</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setAddress" placeholder="Plot 123, Main Road, Lusaka"/>
+</div>
+<div>
+<label class="text-sm">Currency Symbol</label>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="setCur" value="K"/>
+</div>
+</div>
+<h3 class="font-semibold mt-4 mb-2">Users</h3>
+<div class="grid md:grid-cols-4 gap-3">
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uName" placeholder="username"/>
+<input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uPass" placeholder="password"/>
+<select class="w-full rounded-xl border border-slate-300 px-3 py-2" id="uRole">
+<option>Admin</option>
+<option>Manager</option>
+<option>Cashier</option>
+</select>
+<button class="px-4 py-2 rounded-xl text-white" id="uAdd" style="background:#0ea5e9">+ Add User</button>
+</div>
+<div class="mt-3 overflow-x-auto">
+<table class="w-full text-sm" id="uTable"><thead><tr><th>User</th><th>Role</th><th class="no-print">Actions</th></tr></thead><tbody></tbody></table>
+</div>
+</div>
+</section>
+</main>
+<!-- Modals -->
+<dialog class="rounded-2xl p-0 w-full max-w-2xl" id="itemModal">
+<form class="p-4" method="dialog">
+<h3 class="font-semibold text-lg mb-2" id="itemModalTitle">New Item</h3>
+<div class="grid md:grid-cols-3 gap-3">
+<div><label class="text-sm">SKU</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSku" required=""/></div>
+<div class="md:col-span-2"><label class="text-sm">Item Name</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mName" required=""/></div>
+<div><label class="text-sm">Vehicle Make</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mMake"/></div>
+<div><label class="text-sm">Vehicle Model</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mModel"/></div>
+<div><label class="text-sm">Category</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mCat" placeholder="Brakes, Filters, ..."/></div>
+<div><label class="text-sm">Buy Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBuy" step="0.01" type="number" value="0"/></div>
+<div><label class="text-sm">Sell Price (K)</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mSell" step="0.01" type="number" value="0"/></div>
+<div><label class="text-sm">Stock</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mStock" type="number" value="0"/></div>
+<div><label class="text-sm">Reorder Level</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mReorder" type="number" value="5"/></div>
+<div><label class="text-sm">Bin/Location</label><input class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mBin" placeholder="Aisle 1 / Bin 3"/></div>
+<div class="md:col-span-3"><label class="text-sm">Notes</label><textarea class="w-full rounded-xl border border-slate-300 px-3 py-2" id="mNotes"></textarea></div>
+</div>
+<div class="mt-4 flex justify-end gap-2">
+<button class="border rounded-xl px-4 py-2" value="cancel">Cancel</button>
+<button class="px-4 py-2 rounded-xl text-white" id="mSave" style="background:#0ea5e9" value="default">Save</button>
+</div>
+</form>
+</dialog>
+<script>
+    // ---------- Storage & Seed ----------
+    const KEY = 'autospares';
+    const state = JSON.parse(localStorage.getItem(KEY) || '{}');
+    if (!state.users) {
+      state.users = [
+        { username:'admin', password:'admin123', role:'Admin' },
+        { username:'manager', password:'manager123', role:'Manager' },
+        { username:'cashier', password:'cashier123', role:'Cashier' }
+      ];
+    }
+    if (!state.settings) {
+      state.settings = { name:'AutoSpares Pro', address:'Plot 123, Main Road, Lusaka', currency:'K' };
+    }
+    if (!state.items) {
+      state.items = [
+        { sku:'BRK-001', name:'Brake Pad Set (Front)', make:'Toyota', model:'Corolla', cat:'Brakes', buy:150, sell:250, stock:12, reorder:4, bin:'A1-03', notes:'' },
+        { sku:'FLT-104', name:'Oil Filter', make:'Nissan', model:'NP300', cat:'Filters', buy:40, sell:80, stock:25, reorder:10, bin:'B2-01', notes:'' },
+        { sku:'SPK-016', name:'Spark Plug (Iridium)', make:'Universal', model:'', cat:'Ignition', buy:60, sell:120, stock:8, reorder:6, bin:'C3-07', notes:'' }
+      ];
+    }
+    if (!state.suppliers) state.suppliers = [ {name:'AutoParts Ltd', phone:'+260 97 000 0000', email:'sales@autoparts.example'} ];
+    if (!state.sales) state.sales = [];
+    if (!state.grns) state.grns = [];
+    if (!state.invCounter) state.invCounter = 1000;
+
+    function persist(){ localStorage.setItem(KEY, JSON.stringify(state)); refreshAll(); }
+
+    
+// ---------- Session Auth Guard ----------
+const AUTH_KEY = 'autospares_auth';
+function isAuthed(){ return sessionStorage.getItem(AUTH_KEY) === '1'; }
+function lockToLogin(){ currentUser = null; show('login'); }
+
+    // ---------- Auth ----------
+    let currentUser = null;
+    const pages = ['login','dashboard','pos','inventory','purchases','sales','suppliers','settings'];
+    function show(page){
+      pages.forEach(p=>{
+        const el = document.getElementById('page-'+p);
+        if(!el) return;
+        if(p===page) el.classList.remove('hidden'); else el.classList.add('hidden');
+      });
+      // toggle sidebar visibility by role
+      const role = currentUser?.role || 'Guest';
+      document.getElementById('activeRole').innerText = 'Role: ' + role;
+      // role permissions: Cashier cannot access Inventory, Purchases, Suppliers, Settings
+      const disabledForCashier = ['inventory','purchases','suppliers','settings'];
+      disabledForCashier.forEach(p=>{
+        const btn = document.querySelector(`[data-page="${p}"]`);
+        if(btn){
+          if(role==='Cashier') btn.classList.add('opacity-50','pointer-events-none'); else btn.classList.remove('opacity-50','pointer-events-none');
+        }
+      });
+    }
+
+    function login(u,p){
+      const user = state.users.find(x=>x.username===u && x.password===p);
+      if (user) { currentUser = {username:user.username, role:user.role}; sessionStorage.setItem(AUTH_KEY,'1'); show('dashboard'); refreshAll(); }
+      else alert('Invalid credentials');
+    }
+
+    // ---------- Utilities ----------
+    const fmt = n => (state.settings.currency||'K') + ' ' + Number(n||0).toFixed(2);
+    function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+    // ---------- Dashboard ----------
+    function buildDashboard(){
+      // KPIs
+      document.getElementById('kpiItems').innerText = state.items.length;
+      const onhand = state.items.reduce((a,b)=>a+(Number(b.stock)||0),0);
+      document.getElementById('kpiStock').innerText = onhand;
+      const t = new Date().toISOString().slice(0,10);
+      const todaySales = state.sales.filter(s=>s.date.startsWith(t)).reduce((a,b)=>a+Number(b.total),0);
+      document.getElementById('kpiToday').innerText = todaySales.toFixed(2);
+      const low = state.items.filter(i=>Number(i.stock)<=Number(i.reorder)).length;
+      document.getElementById('kpiLow').innerText = low;
+
+      // Today summary boxes
+      const today = state.sales.filter(s=>s.date.startsWith(t));
+      document.getElementById('dashInvoices').innerText = today.length;
+      const tSum = today.reduce((a,b)=>a+Number(b.total),0);
+      document.getElementById('dashSales').innerText = tSum.toFixed(2);
+      const units = today.reduce((a,b)=>a+b.lines.reduce((x,y)=>x+Number(y.qty),0),0);
+      document.getElementById('dashUnits').innerText = units;
+      document.getElementById('dashAvg').innerText = (today.length? (tSum/today.length):0).toFixed(2);
+
+      // Top Selling
+      const agg = {};
+      state.sales.forEach(s=>s.lines.forEach(l=>{ agg[l.sku]=(agg[l.sku]||0)+Number(l.qty); }));
+      const top = Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0,8);
+      const ul = document.getElementById('topSelling'); ul.innerHTML='';
+      top.forEach(([sku,qty])=>{
+        const item = state.items.find(i=>i.sku===sku);
+        const li = document.createElement('li');
+        li.className='flex items-center justify-between';
+        li.innerHTML = `<span class="text-slate-600">${item?item.name:sku}</span><b>${qty}</b>`;
+        ul.appendChild(li);
+      });
+
+      // Low stock list
+      const lows = state.items.filter(i=>Number(i.stock)<=Number(i.reorder)).sort((a,b)=>a.stock-b.stock);
+      const l2 = document.getElementById('lowStock'); l2.innerHTML='';
+      lows.forEach(it=>{
+        const li=document.createElement('li');
+        li.className='flex items-center justify-between';
+        li.innerHTML = `<div><b>${it.sku}</b> - ${it.name}</div><span class="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">${it.stock} left</span>`;
+        l2.appendChild(li);
+      });
+    }
+
+    // ---------- POS ----------
+    const pos = { cart: [] };
+    function posAddBySku(sku){
+      const item = state.items.find(i=>i.sku.toLowerCase()===sku.toLowerCase());
+      if(!item){ alert('Item not found'); return; }
+      const line = pos.cart.find(l=>l.sku===item.sku);
+      if(line) line.qty++; else pos.cart.push({ sku:item.sku, name:item.name, price:Number(item.sell), qty:1 });
+      renderPos();
+    }
+    function renderPos(){
+      const tb = document.querySelector('#posTable tbody'); tb.innerHTML='';
+      pos.cart.forEach((l,i)=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${l.sku}</td><td>${l.name}</td><td><input type="number" class="w-full rounded-xl border border-slate-300 px-3 py-2" style="max-width:110px" value="${Number(l.price).toFixed(2)}" data-idx="${i}" data-field="price"/></td><td><input type="number" class="w-full rounded-xl border border-slate-300 px-3 py-2" style="max-width:80px" value="${l.qty}" min="1" data-idx="${i}" data-field="qty"/></td><td>${(l.qty*l.price).toFixed(2)}</td><td class="no-print"><button class="px-3 py-1 rounded bg-rose-600 text-white" data-del="${i}">Remove</button></td>`;
+        tb.appendChild(tr);
+      });
+      // totals
+      const subtotal = pos.cart.reduce((a,b)=>a+(b.qty*b.price),0);
+      const dis = Number(document.getElementById('posDiscount').value||0);
+      const vatp = Number(document.getElementById('posVat').value||0);
+      const vat = (Math.max(subtotal-dis,0))*vatp/100;
+      const total = Math.max(subtotal-dis,0)+vat;
+      document.getElementById('posSubtotal').innerText = subtotal.toFixed(2);
+      document.getElementById('posDiscountAmt').innerText = dis.toFixed(2);
+      document.getElementById('posVatAmt').innerText = vat.toFixed(2);
+      document.getElementById('posTotal').innerText = total.toFixed(2);
+    }
+    function posProcessPayment(){
+      if(pos.cart.length===0){ alert('Cart is empty'); return; }
+      // stock check
+      for(const l of pos.cart){
+        const it = state.items.find(i=>i.sku===l.sku);
+        if(!it || it.stock<l.qty) return alert(`Insufficient stock for ${l.sku}`);
+      }
+      // deduct
+      pos.cart.forEach(l=>{
+        const it = state.items.find(i=>i.sku===l.sku);
+        it.stock -= Number(l.qty);
+      });
+      const subtotal = pos.cart.reduce((a,b)=>a+(b.qty*b.price),0);
+      const discount = Number(document.getElementById('posDiscount').value||0);
+      const vatp = Number(document.getElementById('posVat').value||0);
+      const vat = (Math.max(subtotal-discount,0))*vatp/100;
+      const total = Math.max(subtotal-discount,0)+vat;
+      const invoice = 'INV'+ (++state.invCounter);
+      const sale = { date:new Date().toISOString(), invoice, cashier: currentUser?.username||'unknown', subtotal, discount, vatp, vat, total, lines: JSON.parse(JSON.stringify(pos.cart)) };
+      state.sales.push(sale);
+      // render receipt
+      document.getElementById('rcptInv').innerText = invoice;
+      document.getElementById('rcptDate').innerText = new Date(sale.date).toLocaleString();
+      document.getElementById('rcptSub').innerText = fmt(subtotal);
+      document.getElementById('rcptDis').innerText = fmt(discount);
+      document.getElementById('rcptVat').innerText = fmt(vat);
+      document.getElementById('rcptTot').innerText = fmt(total);
+      document.getElementById('rcptBody').innerHTML = sale.lines.map(l=>`<tr><td>${l.name}</td><td>${l.qty}</td><td>${fmt(l.price)}</td><td>${fmt(l.qty*l.price)}</td></tr>`).join('');
+      document.getElementById('receipt').classList.remove('hidden');
+      pos.cart = []; renderPos(); persist();
+      // Enable print button after payment
+      const pb = document.getElementById('posPrint'); if(pb){ pb.disabled = false; }
+      alert('Payment processed successfully. Invoice ready to print.');
+    }
+
+    // ---------- Inventory ----------
+    function renderInv(filter=''){
+      const tb = document.querySelector('#invTable tbody'); tb.innerHTML='';
+      const q = filter.trim().toLowerCase();
+      state.items.filter(i=> !q || [i.sku,i.name,i.make,i.model,i.cat].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)) )
+        .forEach(it=>{
+          const tr=document.createElement('tr');
+          tr.innerHTML = `<td>${it.sku}</td><td>${it.name}</td><td>${[it.make,it.model].filter(Boolean).join(' ')}</td><td>${it.buy.toFixed(2)}</td><td>${it.sell.toFixed(2)}</td><td>${it.stock}</td><td>${it.reorder}</td><td>${it.bin||''}</td><td class="no-print flex gap-2"><button class="border rounded-xl px-3 py-1" data-edit="${it.sku}">Edit</button><button class="px-3 py-1 rounded bg-rose-600 text-white" data-del-item="${it.sku}">Delete</button></td>`;
+          tb.appendChild(tr);
+        });
+    }
+
+    function openItemModal(item){
+      document.getElementById('itemModalTitle').innerText = item? 'Edit Item' : 'New Item';
+      document.getElementById('mSku').value = item?.sku||'';
+      document.getElementById('mSku').disabled = !!item; // lock SKU when editing
+      document.getElementById('mName').value = item?.name||'';
+      document.getElementById('mMake').value = item?.make||'';
+      document.getElementById('mModel').value = item?.model||'';
+      document.getElementById('mCat').value = item?.cat||'';
+      document.getElementById('mBuy').value = item?.buy||0;
+      document.getElementById('mSell').value = item?.sell||0;
+      document.getElementById('mStock').value = item?.stock||0;
+      document.getElementById('mReorder').value = item?.reorder||5;
+      document.getElementById('mBin').value = item?.bin||'';
+      document.getElementById('mNotes').value = item?.notes||'';
+      document.getElementById('itemModal').showModal();
+    }
+
+    function saveItemFromModal(){
+      const sku = document.getElementById('mSku').value.trim();
+      const data = {
+        sku,
+        name: document.getElementById('mName').value.trim(),
+        make: document.getElementById('mMake').value.trim(),
+        model: document.getElementById('mModel').value.trim(),
+        cat: document.getElementById('mCat').value.trim(),
+        buy: Number(document.getElementById('mBuy').value||0),
+        sell: Number(document.getElementById('mSell').value||0),
+        stock: Number(document.getElementById('mStock').value||0),
+        reorder: Number(document.getElementById('mReorder').value||5),
+        bin: document.getElementById('mBin').value.trim(),
+        notes: document.getElementById('mNotes').value.trim()
+      };
+      if(!sku) return alert('SKU required');
+      const existing = state.items.find(i=>i.sku===sku);
+      if(existing){ Object.assign(existing, data); }
+      else state.items.push(data);
+      document.getElementById('itemModal').close(); persist();
+    }
+
+    // ---------- Purchases / GRN ----------
+    function renderSupSelect(){
+      const sel = document.getElementById('grnSupplier'); sel.innerHTML='';
+      state.suppliers.forEach((s,i)=>{
+        const o=document.createElement('option'); o.value=i; o.textContent=s.name; sel.appendChild(o);
+      });
+    }
+    function receiveStock(){
+      const sku = document.getElementById('grnSku').value.trim();
+      const qty = Number(document.getElementById('grnQty').value||0);
+      const item = state.items.find(i=>i.sku.toLowerCase()===sku.toLowerCase());
+      if(!item) return alert('Unknown SKU');
+      if(qty<=0) return alert('Qty must be > 0');
+      item.stock += qty;
+      const entry = { date:new Date().toISOString(), supplier: state.suppliers[document.getElementById('grnSupplier').value]?.name||'', sku:item.sku, qty };
+      state.grns.unshift(entry);
+      persist();
+    }
+    function renderGrn(){
+      const ul=document.getElementById('grnList'); ul.innerHTML='';
+      state.grns.slice(0,20).forEach(g=>{
+        const li=document.createElement('li');
+        li.innerHTML = `${new Date(g.date).toLocaleString()} — <b>${g.supplier}</b> received <b>${g.qty}</b> of <b>${g.sku}</b>`;
+        ul.appendChild(li);
+      });
+    }
+
+    // ---------- Sales Records ----------
+    function renderSales(){
+      const from = document.getElementById('salesFrom').value;
+      const to = document.getElementById('salesTo').value;
+      const tb = document.querySelector('#salesTable tbody'); tb.innerHTML='';
+      state.sales.filter(s=>{
+        const d = s.date.slice(0,10);
+        if(from && d<from) return false; if(to && d>to) return false; return true;
+      }).slice().reverse().forEach(s=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML = `<td>${new Date(s.date).toLocaleString()}</td><td>${s.invoice}</td><td>${s.lines.length}</td><td>${s.total.toFixed(2)}</td><td>${s.cashier}</td>`;
+        tb.appendChild(tr);
+      });
+    }
+
+    // ---------- Suppliers ----------
+    function renderSupTable(){
+      const tb=document.querySelector('#supTable tbody'); tb.innerHTML='';
+      state.suppliers.forEach((s,idx)=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML = `<td>${s.name}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td class="no-print"><button class="border rounded-xl px-3 py-1" data-editsup="${idx}">Edit</button><button class="px-3 py-1 rounded bg-rose-600 text-white" data-delsup="${idx}">Delete</button></td>`;
+        tb.appendChild(tr);
+      });
+      renderSupSelect();
+    }
+
+    // ---------- Users & Settings ----------
+    function renderUsers(){
+      document.getElementById('setName').value = state.settings.name||'';
+      document.getElementById('setAddress').value = state.settings.address||'';
+      document.getElementById('setCur').value = state.settings.currency||'K';
+      const tb=document.querySelector('#uTable tbody'); tb.innerHTML='';
+      state.users.forEach((u,idx)=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML = `<td>${u.username}</td><td>${u.role}</td><td class="no-print"><button class="border rounded-xl px-3 py-1" data-deluser="${idx}">Delete</button></td>`;
+        tb.appendChild(tr);
+      });
+    }
+
+    // ---------- Backup/Restore ----------
+    function downloadJSON(filename, data){
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
+    }
+
+    // ---------- Refresh All ----------
+    function refreshAll(){
+      buildDashboard(); renderInv(document.getElementById('invSearch').value||''); renderSales(); renderSupTable(); renderGrn(); renderSupSelect();
+      // receipt header
+      document.getElementById('rcptAddress').innerText = state.settings.address||'';
+      const rn = document.getElementById('rcptName'); if(rn){ rn.innerText = state.settings.name || 'AutoSpares Pro'; }
+    }
+
+    // ---------- Events ----------
+    document.getElementById('btnLogin').addEventListener('click',()=>{
+      login(document.getElementById('loginUser').value.trim(), document.getElementById('loginPass').value);
+    });
+    document.getElementById('btnFillDemo').addEventListener('click',()=>{
+      document.getElementById('loginUser').value='admin'; document.getElementById('loginPass').value='admin123';
+    });
+    document.getElementById('btnLogout').addEventListener('click',()=>{ sessionStorage.removeItem(AUTH_KEY); currentUser=null; show('login'); });
+
+    // Nav
+    document.querySelectorAll('#nav button').forEach(btn=>btn.addEventListener('click',()=>{
+      const p = btn.getAttribute('data-page');
+      if(!currentUser && p!=='login') return alert('Please login first');
+      if(currentUser?.role==='Cashier' && ['inventory','purchases','suppliers','settings'].includes(p)) return alert('Access denied for Cashier');
+      show(p);
+    }));
+
+    // POS
+    document.getElementById('posAdd').addEventListener('click',()=>{
+      const sku = document.getElementById('posSku').value.trim();
+      if(sku) posAddBySku(sku); else {
+        // try search field first match
+        const q = document.getElementById('posSearch').value.trim().toLowerCase();
+        const hit = state.items.find(i=>[i.sku,i.name,i.make,i.model].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
+        if(hit) posAddBySku(hit.sku); else alert('No match');
+      }
+    });
+    document.getElementById('posTable').addEventListener('input',(e)=>{
+      const idx = e.target.getAttribute('data-idx');
+      const field = e.target.getAttribute('data-field');
+      if(idx===null) return; pos.cart[idx][field] = Number(e.target.value||0); renderPos();
+    });
+    document.getElementById('posTable').addEventListener('click',(e)=>{
+      const d = e.target.getAttribute('data-del'); if(d!==null){ pos.cart.splice(Number(d),1); renderPos(); }
+    });
+    document.getElementById('posDiscount').addEventListener('input',renderPos);
+    document.getElementById('posVat').addEventListener('input',renderPos);
+    document.getElementById('posClear').addEventListener('click',()=>{ pos.cart=[]; renderPos(); });
+    document.getElementById('posPay').addEventListener('click',posProcessPayment);
+    document.getElementById('posPrint').addEventListener('click',()=>window.print());
+
+    // Inventory
+    document.getElementById('invSearch').addEventListener('input',(e)=>renderInv(e.target.value));
+    document.getElementById('invAdd').addEventListener('click',()=>openItemModal());
+    document.getElementById('invExport').addEventListener('click',()=>downloadJSON('inventory.json', state.items));
+    document.getElementById('invTable').addEventListener('click',(e)=>{
+      const sku = e.target.getAttribute('data-edit'); if(sku){ const it=state.items.find(i=>i.sku===sku); openItemModal(it); return; }
+      const del = e.target.getAttribute('data-del-item'); if(del){ if(confirm('Delete item '+del+'?')){ state.items = state.items.filter(i=>i.sku!==del); persist(); } }
+    });
+
+    // Item modal buttons
+    document.getElementById('mSave').addEventListener('click',(e)=>{ e.preventDefault(); saveItemFromModal(); });
+
+    // Purchases
+    document.getElementById('grnAdd').addEventListener('click',receiveStock);
+    document.getElementById('grnClear').addEventListener('click',()=>{ document.getElementById('grnSku').value=''; document.getElementById('grnQty').value=1; });
+
+    // Sales
+    document.getElementById('salesFilter').addEventListener('click',renderSales);
+    document.getElementById('salesPrint').addEventListener('click',()=>{ window.print(); });
+
+    // Suppliers
+    document.getElementById('supAdd').addEventListener('click',()=>{
+      const s = { name:document.getElementById('supName').value.trim(), phone:document.getElementById('supPhone').value.trim(), email:document.getElementById('supEmail').value.trim() };
+      if(!s.name) return alert('Supplier name required'); state.suppliers.push(s); document.getElementById('supName').value=''; document.getElementById('supPhone').value=''; document.getElementById('supEmail').value=''; persist();
+    });
+    document.getElementById('supClear').addEventListener('click',()=>{ document.getElementById('supName').value=''; document.getElementById('supPhone').value=''; document.getElementById('supEmail').value=''; });
+    document.getElementById('supTable').addEventListener('click',(e)=>{
+      const di = e.target.getAttribute('data-delsup'); if(di){ if(confirm('Delete supplier?')){ state.suppliers.splice(Number(di),1); persist(); return; } }
+      const ei = e.target.getAttribute('data-editsup'); if(ei){ const s=state.suppliers[Number(ei)]; document.getElementById('supName').value=s.name; document.getElementById('supPhone').value=s.phone||''; document.getElementById('supEmail').value=s.email||''; state.suppliers.splice(Number(ei),1); persist(); }
+    });
+
+    // Settings
+    document.getElementById('uAdd').addEventListener('click',()=>{
+      const u = document.getElementById('uName').value.trim(); const p = document.getElementById('uPass').value; const r = document.getElementById('uRole').value;
+      if(!u || !p) return alert('Username & password required');
+      if(state.users.find(x=>x.username===u)) return alert('User exists');
+      state.users.push({username:u,password:p,role:r}); document.getElementById('uName').value=''; document.getElementById('uPass').value=''; persist();
+    });
+    document.getElementById('uTable').addEventListener('click',(e)=>{
+      const di = e.target.getAttribute('data-deluser'); if(di){ if(confirm('Delete user?')){ state.users.splice(Number(di),1); persist(); } }
+    });
+    ['setName','setAddress','setCur'].forEach(id=>{
+      document.getElementById(id).addEventListener('input',()=>{
+        state.settings.name = document.getElementById('setName').value.trim();
+        state.settings.address = document.getElementById('setAddress').value.trim();
+        state.settings.currency = document.getElementById('setCur').value.trim()||'K';
+        persist();
+      });
+    });
+
+    // Backup / Restore / Import
+    document.getElementById('btnBackup').addEventListener('click',()=>downloadJSON('autospares-backup.json', state));
+    document.getElementById('btnRestore').addEventListener('click',()=>{
+      if(!confirm('This will clear current data and load demo data. Continue?')) return;
+      localStorage.removeItem(KEY); location.reload();
+    });
+    document.getElementById('importFile').addEventListener('change',async (e)=>{
+      const file = e.target.files[0]; if(!file) return;
+      const text = await file.text();
+      try { const data = JSON.parse(text); localStorage.setItem(KEY, JSON.stringify(data)); location.reload(); }
+      catch(err){ alert('Invalid JSON'); }
+    });
+
+    // PWA install prompt
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installBanner').classList.remove('hidden');
+    });
+    document.getElementById('btnInstall').addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        document.getElementById('installBanner').classList.add('hidden');
+      }
+    });
+    document.getElementById('btnDismiss').addEventListener('click', () => {
+      document.getElementById('installBanner').classList.add('hidden');
+    });
+
+    
+    // POS Search suggestions
+    function buildPosSuggestions(q){
+      const list = document.getElementById('posSuggest');
+      if(!list) return;
+      const query = (q||'').trim().toLowerCase();
+      list.innerHTML='';
+      if(!query){ list.classList.add('hidden'); return; }
+      const matches = state.items.filter(i=>[i.sku,i.name,i.make,i.model].filter(Boolean).some(v=>String(v).toLowerCase().includes(query))).slice(0,8);
+      if(matches.length===0){ list.classList.add('hidden'); return; }
+      matches.forEach(it=>{
+        const div = document.createElement('div');
+        div.className = 'suggest-item';
+        div.innerHTML = `<b>${it.sku}</b> — ${it.name} <span class="text-xs text-slate-500">${[it.make,it.model].filter(Boolean).join(' ')}</span>`;
+        div.addEventListener('click',()=>{ posAddBySku(it.sku); list.classList.add('hidden'); document.getElementById('posSearch').value=''; });
+        list.appendChild(div);
+      });
+      list.classList.remove('hidden');
+    }
+    const posSearchEl = document.getElementById('posSearch');
+    if(posSearchEl){
+      posSearchEl.addEventListener('input', (e)=> buildPosSuggestions(e.target.value));
+      posSearchEl.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){ e.preventDefault();
+          const list = document.getElementById('posSuggest');
+          const first = list && list.firstElementChild;
+          if(first){
+            first.click();
+          } else {
+            // fall back: try add first match
+            const q = posSearchEl.value.trim().toLowerCase();
+            const hit = state.items.find(i=>[i.sku,i.name,i.make,i.model].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
+            if(hit) posAddBySku(hit.sku);
+          }
+        }
+      });
+      // Hide suggestions on outside click
+      document.addEventListener('click',(e)=>{
+        const list = document.getElementById('posSuggest');
+        if(!list) return;
+        if(!posSearchEl.contains(e.target) && !list.contains(e.target)){
+          list.classList.add('hidden');
+        }
+      });
+    }
+
+    // Init
+    if (!isAuthed()) {
+      lockToLogin();
+      refreshAll();
+    } else {
+      refreshAll();
+    }
+    window.addEventListener('pageshow', ()=>{ if(!isAuthed()) lockToLogin(); });
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && !isAuthed()) lockToLogin(); });
+  </script>
+
+<!-- Backend wiring block (auto-injected) -->
+<script>
+// ===== CONFIG (from user) =====
+window.DATA_API = 'https://script.google.com/macros/s/AKfycbyCSB-T6IMrk0JrXHAxjC7bwg-39X8NWrRgkAq6lWaK7j8MHC_2_jT0CxO-U_c29UcLAg/exec';
+window.API_KEY  = 'a1b2c3d4e5f6-7g8h9i0j-1k2l3m4n5o6p7q8r9s0t';
+
+// ===== Backend helper =====
 window.backend = async function backend(action, payload = {}) {
   const res = await fetch(window.DATA_API, {
     method: 'POST',
@@ -12,456 +857,210 @@ window.backend = async function backend(action, payload = {}) {
   return res.json();
 };
 
-// ===== Durable offline write queue =====
+// ===== Simple durable offline queue =====
 const QUEUE_KEY = 'pendingWrites';
-let isFlushing = false;
-
-function qLoad(){ return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
-function qSave(q){ localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
-function enqueue(action, payload){
-  const q = qLoad();
-  q.push({ action, payload, attempts:0, nextAttemptAt:0 });
-  qSave(q);
-}
-function backoffMs(attempts){ return Math.min(60000, Math.pow(2, attempts) * 1000); }
-
+let __isFlushing = false;
+const qLoad = () => JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+const qSave = (q) => localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+const enqueueWrite = (action, payload) => { const q=qLoad(); q.push({action,payload,attempts:0,next:0}); qSave(q); };
+const backoff = (n) => Math.min(60000, Math.pow(2, n) * 1000);
 async function flushQueue(){
-  if (!navigator.onLine || isFlushing) return;
-  isFlushing = true;
+  if (!navigator.onLine || __isFlushing) return;
+  __isFlushing = True = true;
   try{
-    let q = qLoad();
-    if (!q.length) return;
-    const now = Date.now();
-    let progressed = false;
-    for (let i=0; i<q.length; i++){
-      const job = q[i];
-      if ((job.nextAttemptAt||0) > now) continue;
+    let q = qLoad(); if (!q.length) return;
+    const now = Date.now(); let progressed=false;
+    for (let i=0;i<q.length;i++){
+      const job = q[i]; if ((job.next||0) > now) continue;
       try{
         const r = await backend(job.action, job.payload);
-        if (r && r.ok){
-          q.splice(i,1); i--; progressed = true;
-        }else{
-          job.attempts = (job.attempts||0)+1;
-          job.nextAttemptAt = Date.now() + backoffMs(job.attempts);
-        }
-      }catch(e){
-        job.attempts = (job.attempts||0)+1;
-        job.nextAttemptAt = Date.now() + backoffMs(job.attempts);
-      }
+        if (r && r.ok){ q.splice(i,1); i--; progressed=true; }
+        else { job.attempts=(job.attempts||0)+1; job.next = Date.now()+backoff(job.attempts); }
+      }catch(e){ job.attempts=(job.attempts||0)+1; job.next = Date.now()+backoff(job.attempts); }
     }
     qSave(q);
     if (progressed && q.length) await flushQueue();
-  } finally {
-    isFlushing = false;
-  }
+  } finally { __isFlushing = false; }
 }
 window.addEventListener('online', flushQueue);
 setInterval(flushQueue, 5000);
 
-// ===== App state helpers =====
-const SKEY = (k) => `state.${k}`;
-const state = {
-  items: [], sales: [], grn: [], suppliers: [], users: [], settings: [],
-  user: null, role: 'Guest', cart: [], business: { name:'AutoSpares Pro', address:'Plot 123, Main Road, Lusaka', cur:'K' }
-};
-function loadState(){
-  for (const k of ['items','sales','grn','suppliers','users','settings']){
-    const v = localStorage.getItem(SKEY(k));
-    state[k] = v ? JSON.parse(v) : [];
-  }
-  const b = localStorage.getItem('business'); if (b) state.business = JSON.parse(b);
-  const u = localStorage.getItem('auth.user'); if (u) { const {user,role}=JSON.parse(u); state.user=user; state.role=role; }
+// ===== Mapping helpers between local item schema and backend schema =====
+function toBackendItem(local){
+  return {
+    sku: local.sku,
+    name: local.name,
+    make: local.make || '',
+    model: local.model || '',
+    category: local.cat || local.category || '',
+    buy: Number(local.buy||0),
+    sell: Number(local.sell||0),
+    stock: Number(local.stock||0),
+    reorder: Number(local.reorder||0),
+    bin: local.bin || '',
+    notes: local.notes || ''
+  };
 }
-function saveStatePart(k, val){ state[k]=val; localStorage.setItem(SKEY(k), JSON.stringify(val)); }
-function setBusiness(next){ state.business = { ...state.business, ...next }; localStorage.setItem('business', JSON.stringify(state.business)); }
+function fromBackendItem(row){
+  return {
+    sku: row.sku,
+    name: row.name,
+    make: row.make || '',
+    model: row.model || '',
+    cat: row.category || '',
+    buy: Number(row.buy||0),
+    sell: Number(row.sell||0),
+    stock: Number(row.stock||0),
+    reorder: Number(row.reorder||0),
+    bin: row.bin || '',
+    notes: row.notes || ''
+  };
+}
 
-// ===== Sync pull (global) =====
+// ===== Sync pull: load items/suppliers/GRN from backend into local app =====
 window.syncPull = async function syncPull(){
-  const r = await backend('syncPull');
-  if (r.ok){
-    const d = r.data||{};
-    for (const k of ['items','sales','grn','suppliers','users','settings']){
-      localStorage.setItem(SKEY(k), JSON.stringify(d[k]||[]));
-      state[k] = d[k]||[];
+  try{
+    const r = await backend('syncPull');
+    if (!r.ok) { console.warn('syncPull failed', r.error); return; }
+    const d = r.data || {};
+    // Items
+    if (Array.isArray(d.items)){
+      const merged = d.items.map(fromBackendItem);
+      if (window.state && Array.isArray(window.state.items)) {
+        window.state.items = merged;
+        if (typeof persist === 'function') persist(); // leverage app's saver
+        else localStorage.setItem('autospares', JSON.stringify(window.state));
+      }
     }
-    renderEverything();
-  } else {
-    console.warn('syncPull failed:', r.error);
-  }
+    // Suppliers
+    if (Array.isArray(d.suppliers)){
+      if (window.state) { window.state.suppliers = d.suppliers; if (typeof persist === 'function') persist(); }
+    }
+    // GRN (keep as activity list locally)
+    if (Array.isArray(d.grn)){
+      if (window.state) { 
+        // normalize to the local simple structure for the sidebar list
+        window.state.grns = d.grn.map(g => ({ date: (g.date || new Date().toISOString()), supplier: g.supplier||'', sku: g.sku||'', qty: Number(g.qty||0) }));
+        if (typeof persist === 'function') persist();
+      }
+    }
+    // Settings (key/value)
+    if (Array.isArray(d.settings)){
+      const kv = Object.fromEntries(d.settings.filter(x=>x && x.key).map(x=>[x.key, x.value]));
+      if (window.state && window.state.settings){
+        if (kv.name) window.state.settings.name = kv.name;
+        if (kv.address) window.state.settings.address = kv.address;
+        if (kv.currency) window.state.settings.currency = kv.currency;
+        if (typeof persist === 'function') persist();
+      }
+    }
+    // Re-render UI
+    if (typeof refreshAll === 'function') refreshAll();
+  }catch(e){ console.warn('syncPull exception', e); }
 };
 
-// ===== Convenience: safe write wrappers (use these) =====
+// ===== Safe write helpers =====
 async function saveItemsSafe(items){
+  const payload = items.map(toBackendItem);
   if (navigator.onLine){
-    const r = await backend('upsertItems', items);
-    if (!r.ok) enqueue('upsertItems', items);
-  } else enqueue('upsertItems', items);
+    const r = await backend('upsertItems', payload);
+    if (!r.ok) enqueueWrite('upsertItems', payload);
+  } else enqueueWrite('upsertItems', payload);
 }
 async function recordSaleSafe(lines){
   if (navigator.onLine){
     const r = await backend('recordSale', lines);
-    if (!r.ok) enqueue('recordSale', lines);
-  } else enqueue('recordSale', lines);
+    if (!r.ok) enqueueWrite('recordSale', lines);
+  } else enqueueWrite('recordSale', lines);
 }
 async function receiveGRNSafe(rows){
   if (navigator.onLine){
     const r = await backend('receiveGRN', rows);
-    if (!r.ok) enqueue('receiveGRN', rows);
-  } else enqueue('receiveGRN', rows);
+    if (!r.ok) enqueueWrite('receiveGRN', rows);
+  } else enqueueWrite('receiveGRN', rows);
 }
 
-// ===== UI wiring =====
-const $ = (q) => document.querySelector(q);
-const $$= (q) => Array.from(document.querySelectorAll(q));
-
-function showPage(id){
-  $$('#pages > div').forEach(el => el.classList.add('hidden'));
-  $(`#page-${id}`)?.classList.remove('hidden');
-}
-function setRole(role){ state.role = role; $('#activeRole').textContent = `Role: ${role}`; }
-
-// Nav
-$('#nav')?.addEventListener('click', (e)=>{
-  if (e.target?.dataset?.page) showPage(e.target.dataset.page);
-});
-
-// Demo login
-const DEMO = { admin:{pass:'admin123',role:'Admin'}, manager:{pass:'manager123',role:'Manager'}, cashier:{pass:'cashier123',role:'Cashier'} };
-$('#btnFillDemo')?.addEventListener('click', ()=>{
-  $('#loginUser').value='admin'; $('#loginPass').value='admin123';
-});
-$('#btnLogin')?.addEventListener('click', ()=>{
-  const u = $('#loginUser').value.trim().toLowerCase();
-  const p = $('#loginPass').value;
-  if (DEMO[u] && DEMO[u].pass===p){
-    state.user = u; setRole(DEMO[u].role);
-    localStorage.setItem('auth.user', JSON.stringify({user:u, role: state.role}));
-    $('#page-login').classList.add('hidden'); showPage('dashboard'); renderEverything();
-  } else {
-    alert('Invalid credentials (try admin/admin123, manager/manager123, cashier/cashier123)');
+// ===== Hook up buttons by overriding existing app functions =====
+(function patchApp(){
+  // 1) Inventory save
+  if (typeof saveItemFromModal === 'function'){
+    const __origSaveItemFromModal = saveItemFromModal;
+    window.saveItemFromModal = async function(){
+      // capture values before original persist
+      const skuEl = document.getElementById('mSku');
+      const sku = skuEl ? skuEl.value.trim() : '';
+      await __origSaveItemFromModal();
+      try{
+        const it = (window.state && Array.isArray(window.state.items)) ? window.state.items.find(i=>i.sku===sku) : null;
+        if (it) await saveItemsSafe([it]);
+      }catch(e){ console.warn('saveItemsSafe failed', e); }
+    };
   }
-});
-$('#btnLogout')?.addEventListener('click', ()=>{
-  localStorage.removeItem('auth.user'); state.user=null; setRole('Guest'); location.reload();
-});
 
-// ===== Inventory =====
-const itemModal = $('#itemModal');
-function openItemModal(edit=null){
-  $('#itemModalTitle').textContent = edit ? 'Edit Item' : 'New Item';
-  $('#mSku').value   = edit?.sku   || '';
-  $('#mName').value  = edit?.name  || '';
-  $('#mMake').value  = edit?.make  || '';
-  $('#mModel').value = edit?.model || '';
-  $('#mCat').value   = edit?.category || '';
-  $('#mBuy').value   = edit?.buy   ?? 0;
-  $('#mSell').value  = edit?.sell  ?? 0;
-  $('#mStock').value = edit?.stock ?? 0;
-  $('#mReorder').value = edit?.reorder ?? 5;
-  $('#mBin').value   = edit?.bin   || '';
-  $('#mNotes').value = edit?.notes || '';
-  itemModal.showModal();
-}
-$('#invAdd')?.addEventListener('click', ()=> openItemModal());
-$('#mSave')?.addEventListener('click', async (ev)=>{
-  ev.preventDefault();
-  const item = {
-    sku: $('#mSku').value.trim(),
-    name: $('#mName').value.trim(),
-    make: $('#mMake').value.trim(),
-    model: $('#mModel').value.trim(),
-    category: $('#mCat').value.trim(),
-    buy: parseFloat($('#mBuy').value||0),
-    sell: parseFloat($('#mSell').value||0),
-    stock: parseInt($('#mStock').value||0),
-    reorder: parseInt($('#mReorder').value||0),
-    bin: $('#mBin').value.trim(),
-    notes: $('#mNotes').value.trim()
-  };
-  if (!item.sku || !item.name){ alert('SKU and Item Name are required'); return; }
-  await saveItemsSafe([item]);
-  // optimistic local update
-  const idx = state.items.findIndex(x => x.sku===item.sku);
-  if (idx>=0) state.items[idx]=item; else state.items.push(item);
-  saveStatePart('items', state.items);
-  itemModal.close();
-  renderInventory(); renderDashboard();
-});
-$('#invExport')?.addEventListener('click', ()=>{
-  const blob = new Blob([JSON.stringify(state.items, null, 2)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'autospares_items.json';
-  a.click();
-});
-
-// Inventory table render
-function renderInventory(filter=''){
-  const tb = $('#invTable tbody'); if (!tb) return;
-  const kw = $('#invSearch').value.trim().toLowerCase();
-  const rows = state.items
-    .filter(it => !kw || [it.sku,it.name,it.make,it.model,it.category].join(' ').toLowerCase().includes(kw))
-    .sort((a,b)=> (a.sku||'').localeCompare(b.sku||''));
-  tb.innerHTML = rows.map(it=>`
-    <tr class="border-b">
-      <td>${it.sku||''}</td><td>${it.name||''}</td><td>${it.make||''} ${it.model||''}</td>
-      <td>${(+it.buy||0).toFixed(2)}</td><td>${(+it.sell||0).toFixed(2)}</td>
-      <td>${(+it.stock||0)}</td><td>${(+it.reorder||0)}</td><td>${it.bin||''}</td>
-      <td class="no-print">
-        <button class="px-2 py-1 border rounded" data-edit="${it.sku}">Edit</button>
-      </td>
-    </tr>`).join('');
-  tb.querySelectorAll('[data-edit]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const sku = btn.getAttribute('data-edit');
-      const it = state.items.find(x=>x.sku===sku);
-      openItemModal(it);
-    });
-  });
-}
-$('#invSearch')?.addEventListener('input', ()=> renderInventory());
-
-// ===== Suppliers =====
-$('#supAdd')?.addEventListener('click', async ()=>{
-  const s = {
-    name: $('#supName').value.trim(),
-    phone: $('#supPhone').value.trim(),
-    email: $('#supEmail').value.trim()
-  };
-  if (!s.name){ alert('Supplier name required'); return; }
-  await receiveSuppliers([s]);
-});
-async function receiveSuppliers(arr){
-  if (navigator.onLine){
-    const r = await backend('upsertSuppliers', arr);
-    if (!r.ok) enqueue('upsertSuppliers', arr);
-  } else enqueue('upsertSuppliers', arr);
-  // optimistic local update
-  for (const s of arr){
-    const i = state.suppliers.findIndex(x=>x.name===s.name);
-    if (i>=0) state.suppliers[i]=s; else state.suppliers.push(s);
+  // 2) Receive stock (GRN)
+  if (typeof receiveStock === 'function'){
+    const __origReceiveStock = receiveStock;
+    window.receiveStock = async function(){
+      const sku = (document.getElementById('grnSku')||{}).value?.trim() || '';
+      const qty = Number((document.getElementById('grnQty')||{}).value||0);
+      const supplierName = (document.getElementById('grnSupplier')||{}).selectedIndex;
+      const supplier = (window.state && window.state.suppliers && window.state.suppliers[supplierName]) ? window.state.suppliers[supplierName].name : '';
+      await __origReceiveStock();
+      try{
+        const row = { grnId:'GRN-'+Date.now(), date: new Date().toISOString().slice(0,10), supplier, sku, qty, buy:0, total:0, clerk: (window.currentUser && window.currentUser.username) || 'system' };
+        await receiveGRNSafe([row]);
+        // also push the updated item to backend
+        const it = (window.state && Array.isArray(window.state.items)) ? window.state.items.find(i=>i.sku===sku) : null;
+        if (it) await saveItemsSafe([it]);
+      }catch(e){ console.warn('receiveGRNSafe/saveItemsSafe failed', e); }
+    };
   }
-  saveStatePart('suppliers', state.suppliers);
-  renderSuppliers(); fillSupplierSelect();
-}
-$('#supClear')?.addEventListener('click', ()=> { $('#supName').value=''; $('#supPhone').value=''; $('#supEmail').value=''; });
-function renderSuppliers(){
-  const tb = $('#supTable tbody'); if (!tb) return;
-  tb.innerHTML = state.suppliers.map(s=>`
-    <tr class="border-b"><td>${s.name||''}</td><td>${s.phone||''}</td><td>${s.email||''}</td><td></td></tr>
-  `).join('');
-}
-function fillSupplierSelect(){
-  const sel = $('#grnSupplier'); if (!sel) return;
-  sel.innerHTML = `<option value="">Select supplier</option>` + state.suppliers.map(s=>`<option>${s.name}</option>`).join('');
-}
 
-// ===== GRN (Receive stock) =====
-$('#grnAdd')?.addEventListener('click', async ()=>{
-  const supplier = $('#grnSupplier').value.trim();
-  const sku = $('#grnSku').value.trim();
-  const qty = parseInt($('#grnQty').value||'1',10);
-  if (!supplier || !sku || !qty){ alert('Supplier, SKU and Qty required'); return; }
-
-  const row = { grnId: 'GRN-' + Date.now(), date: new Date().toISOString().slice(0,10), supplier, sku, qty, buy: 0, total: 0, clerk: state.user || 'system' };
-  await receiveGRNSafe([row]);
-
-  // adjust local stock
-  const it = state.items.find(x=>x.sku===sku);
-  if (it){ it.stock = (+it.stock||0)+qty; } else { alert('SKU not found in items; add the item first.'); }
-  saveStatePart('items', state.items);
-
-  // keep GRN list
-  state.grn.unshift(row);
-  saveStatePart('grn', state.grn);
-  renderGRN();
-  renderInventory();
-  renderDashboard();
-});
-$('#grnClear')?.addEventListener('click', ()=>{
-  $('#grnSupplier').value=''; $('#grnSku').value=''; $('#grnQty').value='1';
-});
-function renderGRN(){
-  const ul = $('#grnList'); if (!ul) return;
-  ul.innerHTML = state.grn.slice(0,10).map(g=>`<li> ${g.date} • <b>${g.sku}</b> × ${g.qty} from ${g.supplier}</li>`).join('');
-}
-
-// ===== POS (very small working version) =====
-function posFind(term){
-  const kw = term.toLowerCase();
-  return state.items.filter(it => [it.sku,it.name,it.make,it.model,it.category].join(' ').toLowerCase().includes(kw));
-}
-$('#posSearch')?.addEventListener('input', ()=>{
-  const box = $('#posSuggest');
-  const txt = $('#posSearch').value.trim();
-  if (!txt){ box.classList.add('hidden'); box.innerHTML=''; return; }
-  const hits = posFind(txt).slice(0,20);
-  box.innerHTML = hits.map(h=>`<div class="suggest-item" data-sku="${h.sku}">${h.sku} — ${h.name} (${h.sell||0})</div>`).join('');
-  box.classList.toggle('hidden', hits.length===0);
-  box.querySelectorAll('[data-sku]').forEach(d=> d.addEventListener('click', ()=> { addToCart(d.getAttribute('data-sku')); box.classList.add('hidden'); $('#posSearch').value=''; }));
-});
-$('#posAdd')?.addEventListener('click', ()=> {
-  const sku = $('#posSku').value.trim(); if (!sku) return;
-  addToCart(sku); $('#posSku').value='';
-});
-function addToCart(sku){
-  const it = state.items.find(x=>x.sku===sku);
-  if (!it){ alert('Item not found'); return; }
-  const ex = state.cart.find(x=>x.sku===sku);
-  if (ex){ ex.qty+=1; } else { state.cart.push({ sku: it.sku, name: it.name, price:+it.sell||0, qty:1 }); }
-  renderCart();
-}
-function renderCart(){
-  const tb = $('#posTable tbody'); if (!tb) return;
-  tb.innerHTML = state.cart.map((l,i)=>`
-    <tr class="border-b">
-      <td>${l.sku}</td><td>${l.name}</td>
-      <td><input type="number" min="0" value="${l.price}" data-price="${i}" class="w-24 border rounded px-2 py-1"/></td>
-      <td><input type="number" min="1" value="${l.qty}" data-qty="${i}" class="w-16 border rounded px-2 py-1"/></td>
-      <td>${(l.price*l.qty).toFixed(2)}</td>
-      <td class="no-print"><button data-rm="${i}" class="border rounded px-2 py-1">X</button></td>
-    </tr>`).join('');
-  tb.querySelectorAll('[data-rm]').forEach(b=> b.addEventListener('click', ()=>{ state.cart.splice(+b.getAttribute('data-rm'),1); renderCart(); }));
-  tb.querySelectorAll('[data-qty]').forEach(inp=> inp.addEventListener('input', ()=>{ const i=+inp.dataset.qty; state.cart[i].qty = Math.max(1, +inp.value||1); renderCart(); }));
-  tb.querySelectorAll('[data-price]').forEach(inp=> inp.addEventListener('input', ()=>{ const i=+inp.dataset.price; state.cart[i].price = Math.max(0, +inp.value||0); renderCart(); }));
-  calcTotals();
-}
-function calcTotals(){
-  const sub = state.cart.reduce((s,l)=> s + l.price*l.qty, 0);
-  const discount = +($('#posDiscount').value||0);
-  const vatPct = +($('#posVat').value||0);
-  const vat = ((sub - discount) * vatPct)/100;
-  const tot = sub - discount + vat;
-  $('#posSubtotal').textContent = sub.toFixed(2);
-  $('#posDiscountAmt').textContent = discount.toFixed(2);
-  $('#posVatAmt').textContent = vat.toFixed(2);
-  $('#posTotal').textContent = tot.toFixed(2);
-  $('#posPrint').disabled = state.cart.length===0;
-}
-$('#posDiscount')?.addEventListener('input', calcTotals);
-$('#posVat')?.addEventListener('input', calcTotals);
-$('#posClear')?.addEventListener('click', ()=> { state.cart=[]; renderCart(); });
-
-$('#posPay')?.addEventListener('click', async ()=>{
-  if (!state.cart.length) return alert('Cart is empty');
-  const today = new Date().toISOString().slice(0,10);
-  const invoiceId = 'INV-'+Date.now();
-  const vatPct = +($('#posVat').value||0);
-  const discount = +($('#posDiscount').value||0);
-  // create sale lines
-  const lines = state.cart.map(l => ({
-    invoiceId, date: today, sku: l.sku, qty: l.qty, price: l.price,
-    discount: 0, vat: ((l.price*l.qty - (discount/state.cart.length)) * vatPct)/100,
-    total: (l.price*l.qty), cashier: state.user || 'cashier'
-  }));
-  await recordSaleSafe(lines);
-  // reduce local stock
-  for (const l of state.cart){
-    const it = state.items.find(x=>x.sku===l.sku);
-    if (it) it.stock = Math.max(0, (+it.stock||0) - l.qty);
+  // 3) POS payment -> record sales + update items
+  if (typeof posProcessPayment === 'function'){
+    const __origPosPay = posProcessPayment;
+    window.posProcessPayment = async function(){
+      // We'll run original to update local state & build receipt
+      const beforeItems = (window.state && Array.isArray(window.state.items)) ? JSON.parse(JSON.stringify(window.state.items)) : [];
+      const beforeSalesLen = (window.state && Array.isArray(window.state.sales)) ? window.state.sales.length : 0;
+      await __origPosPay();
+      try{
+        // find the sale just appended
+        const sale = (window.state && Array.isArray(window.state.sales)) ? window.state.sales[window.state.sales.length - 1] : null;
+        if (sale){
+          const invoiceId = sale.invoice || ('INV-'+Date.now());
+          const date = (sale.date||'').slice(0,10) || new Date().toISOString().slice(0,10);
+          const cashier = (window.currentUser && window.currentUser.username) || 'cashier';
+          // Build per-line rows for backend
+          const lines = (sale.lines||[]).map(l => ({
+            invoiceId, date, sku: l.sku, qty: Number(l.qty||0), price: Number(l.price||0),
+            discount: 0, vat: 0, total: Number(l.qty||0) * Number(l.price||0), cashier
+          }));
+          if (lines.length) await recordSaleSafe(lines);
+        }
+        // Push updated items (stock reduced)
+        const changed = [];
+        if (window.state && Array.isArray(window.state.items)){
+          const bySku = new Set();
+          const prev = new Map(beforeItems.map(i=>[i.sku, i.stock]));
+          window.state.items.forEach(i=>{
+            if (prev.has(i.sku) && prev.get(i.sku) != i.stock) { bySku.add(i.sku); }
+          });
+          window.state.items.forEach(i=>{ if (bySku.has(i.sku)) changed.push(i); });
+        }
+        if (changed.length) await saveItemsSafe(changed);
+      }catch(e){ console.warn('recordSaleSafe/saveItemsSafe failed', e); }
+    };
   }
-  saveStatePart('items', state.items);
-  // save sale locally
-  state.sales.push(...lines);
-  saveStatePart('sales', state.sales);
-  renderDashboard(); renderInventory();
-  // print-ready receipt
-  fillReceipt(invoiceId, today, lines);
-  $('#posPrint').disabled = false;
-  alert('Payment processed');
-  state.cart=[]; renderCart();
-});
-$('#posPrint')?.addEventListener('click', ()=> {
-  $('#receipt').classList.remove('hidden'); window.print(); $('#receipt').classList.add('hidden');
-});
-function fillReceipt(inv,date,lines){
-  $('#rcptName').textContent = state.business.name;
-  $('#rcptAddress').textContent = state.business.address;
-  $('#rcptInv').textContent = inv;
-  $('#rcptDate').textContent = date;
-  const tbody = $('#rcptBody'); tbody.innerHTML='';
-  let sub=0; lines.forEach(l=>{ sub += l.price*l.qty; tbody.insertAdjacentHTML('beforeend', `<tr><td>${l.sku} - ${l.name||''}</td><td>${l.qty}</td><td>${l.price.toFixed(2)}</td><td>${(l.price*l.qty).toFixed(2)}</td></tr>`); });
-  const discount = +($('#posDiscount').value||0);
-  const vat = +($('#posVatAmt').textContent||0);
-  const total = +($('#posTotal').textContent||0);
-  $('#rcptSub').textContent = sub.toFixed(2);
-  $('#rcptDis').textContent = discount.toFixed(2);
-  $('#rcptVat').textContent = vat.toFixed(2);
-  $('#rcptTot').textContent = total.toFixed(2);
-}
+})();
 
-// ===== Sales (table & filters) =====
-$('#salesFilter')?.addEventListener('click', renderSales);
-$('#salesPrint')?.addEventListener('click', ()=> window.print());
-function renderSales(){
-  const from = $('#salesFrom').value || '0000-01-01';
-  const to   = $('#salesTo').value   || '9999-12-31';
-  const tb = $('#salesTable tbody'); if (!tb) return;
-  const rows = state.sales.filter(s => s.date>=from && s.date<=to);
-  const byInvoice = rows.reduce((m, r)=> {
-    const k = r.invoiceId; (m[k]=m[k]||{total:0, items:0, cashier:r.cashier, date:r.date}).total += +r.total||0; m[k].items += r.qty||0; return m;
-  }, {});
-  tb.innerHTML = Object.entries(byInvoice).map(([inv, info])=>`
-    <tr class="border-b"><td>${info.date}</td><td>${inv}</td><td>${info.items}</td><td>${info.total.toFixed(2)}</td><td>${info.cashier}</td></tr>
-  `).join('');
-}
-
-// ===== Settings =====
-$('#uAdd')?.addEventListener('click', ()=>{
-  const name = $('#uName').value.trim();
-  const pass = $('#uPass').value.trim();
-  const role = $('#uRole').value;
-  if (!name || !pass) return alert('User and password required');
-  // local-only demo users (you can later move to backend)
-  const users = state.users || [];
-  const exists = users.find(u=>u.username===name);
-  if (exists){ exists.role=role; } else users.push({ username:name, role, passwordHash: pass });
-  saveStatePart('users', users);
-  renderUsers();
-});
-function renderUsers(){
-  const tb = $('#uTable tbody'); if (!tb) return;
-  tb.innerHTML = (state.users||[]).map(u=>`<tr class="border-b"><td>${u.username}</td><td>${u.role}</td><td></td></tr>`).join('');
-}
-// Business settings save (live as you type)
-$('#setName')?.addEventListener('input', e=> { setBusiness({name:e.target.value}); });
-$('#setAddress')?.addEventListener('input', e=> { setBusiness({address:e.target.value}); });
-$('#setCur')?.addEventListener('input', e=> { setBusiness({cur:e.target.value}); });
-
-// ===== Dashboard / KPIs =====
-function renderDashboard(){
-  const itemsCount = state.items.length;
-  const stockSum   = state.items.reduce((s,it)=> s + (+it.stock||0), 0);
-  const today = new Date().toISOString().slice(0,10);
-  const todaySales = state.sales.filter(s=>s.date===today).reduce((s,r)=> s + (+r.total||0), 0);
-  const low = state.items.filter(it => (+it.stock||0) <= (+it.reorder||0)).length;
-
-  $('#kpiItems').textContent = itemsCount;
-  $('#kpiStock').textContent = stockSum;
-  $('#kpiToday').textContent = (todaySales||0).toFixed(2);
-  $('#kpiLow').textContent = low;
-
-  // Top selling (by qty)
-  const sold = state.sales.reduce((m, r)=> { m[r.sku]=(m[r.sku]||0)+(+r.qty||0); return m; }, {});
-  const top = Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  $('#topSelling').innerHTML = top.map(([sku,qty])=>`<li>${sku} — <b>${qty}</b></li>`).join('') || '<li class="text-slate-400">No sales yet</li>';
-  // Low stock list
-  $('#lowStock').innerHTML = state.items.filter(it => (+it.stock||0) <= (+it.reorder||0))
-    .slice(0,8).map(it=>`<li>${it.sku} — <b>${it.stock||0}</b> (≤ ${it.reorder||0})</li>`).join('') || '<li class="text-slate-400">None</li>';
-}
-
-// ===== Initial boot =====
-loadState();
-$('#setName').value = state.business.name;
-$('#setAddress').value = state.business.address;
-$('#setCur').value = state.business.cur;
-setRole(state.role);
-renderUsers(); renderSuppliers(); fillSupplierSelect(); renderInventory(); renderGRN(); renderSales(); renderDashboard();
-
-// Pull now + poll, and try flush queue
+// ===== Boot: try pulling and flushing after page load =====
 window.addEventListener('load', ()=>{
   syncPull();
   setInterval(syncPull, 8000);
   flushQueue();
 });
 </script>
+
+</body>
+</html>
